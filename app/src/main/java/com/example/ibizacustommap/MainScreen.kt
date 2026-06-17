@@ -337,7 +337,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             color = TEXT_GRAY
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             textAlign = Paint.Align.LEFT
-            textSize = height * 0.028f
+            textSize = height * 0.033f
             letterSpacing = 0.08f
         }
 
