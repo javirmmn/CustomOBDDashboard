@@ -66,16 +66,13 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             // --- INICIO DEL SIMULADOR MATEMÁTICO ---
             simulationTick += 0.05f
 
-            // Creamos tres "ondas" para que los valores no suban y bajen todos exactamente a la vez
             val waveSlow = ((Math.sin(simulationTick.toDouble() * 0.5) + 1.0) / 2.0).toFloat()
             val waveFast = ((Math.sin(simulationTick.toDouble() * 1.5) + 1.0) / 2.0).toFloat()
             val waveAFR = ((Math.cos(simulationTick.toDouble() * 0.7) + 1.0) / 2.0).toFloat()
 
             synchronized(telemetryLock) {
-                // RPM LEDs (De 0 a 24)
                 activeLeds = (waveFast * 24f).toInt()
 
-                // Velocidad y marchas
                 speedKmh = 60f + (waveSlow * 90f)
                 gear = when {
                     speedKmh < 80 -> 3
@@ -83,32 +80,18 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                     else -> 5
                 }
 
-                // Aceite (Ampliamos rango de 60º a 130º para ver frío y calor extremo)
                 oilTemp = 60f + (waveSlow * 70f)
-
-                // Presión de Turbo (De -0.2 bar en retención a 1.6 bar a fondo)
-                turboPressure = -0.2f + (waveFast * 1.8f)
-
-                // Temperatura de admisión (De 25º a 65º)
+                turboPressure = -0.2f + (waveFast * 1.8f) // Ya estaba calculado en Bares
                 intakeTemp = 25f + (waveSlow * 40f)
-
-                // Acelerador
                 throttlePercent = waveFast * 100f
-
-                // Mezcla AFR (Barrido completo de 10.0 a 16.5 para ver todos los colores)
                 afr = 10.0f + (waveAFR * 6.5f)
-
-                // Carga del motor y Fuerzas G
                 engineLoad = waveFast * 100f
                 gForce = waveFast * 1.2f
-
-                // Caudalímetro
                 maf = 10f + (waveFast * 130f)
             }
             // --- FIN DEL SIMULADOR ---
 
             scheduleRedraw()
-            // Refresco ultra rápido para 30 FPS
             renderHandler.postDelayed(this, REFRESH_TICK_MS)
         }
     }
@@ -127,12 +110,9 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
 
     init {
-
         carContext
             .getCarService(NavigationManager::class.java)
-            .setNavigationManagerCallback(
-                navigationManagerCallback
-            )
+            .setNavigationManagerCallback(navigationManagerCallback)
 
         carContext
             .getCarService(AppManager::class.java)
@@ -140,9 +120,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
 
         lifecycle.addObserver(
             LifecycleEventObserver { _, event ->
-
                 if (event == Lifecycle.Event.ON_DESTROY) {
-
                     try {
                         getCarContext().getCarService(NavigationManager::class.java).navigationEnded()
                         getCarContext().getCarService(NavigationManager::class.java).clearNavigationManagerCallback()
@@ -154,10 +132,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             },
         )
     }
-
-    // =========================================================
-    // TEMPLATE (Con el botón ActionStrip restaurado)
-    // =========================================================
 
     private fun buildActionStrip(): ActionStrip =
         ActionStrip.Builder()
@@ -174,10 +148,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             .setActionStrip(buildActionStrip())
             .build()
     }
-
-    // =========================================================
-    // SURFACE
-    // =========================================================
 
     override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
         getCarContext().getCarService(NavigationManager::class.java).navigationStarted()
@@ -214,10 +184,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             redrawQueued = false
         }
     }
-
-    // =========================================================
-    // RENDER LOOP
-    // =========================================================
 
     private fun scheduleRedraw() {
         if (surfaceContainer == null) return
@@ -297,11 +263,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
     }
 
-    // =========================================================
-    // DASHBOARD
-    // =========================================================
-
-    // Pequeña clase para estructurar los datos y su color dinámico
     private data class TelemetryItem(val label: String, val value: String, val unit: String, val dynamicColor: Int)
 
     private fun drawGt3Dashboard(
@@ -309,14 +270,9 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         width: Int,
         height: Int,
     ) {
-
         canvas.drawColor(BG_BLACK)
 
         val density = getCarContext().resources.displayMetrics.density
-
-        // =====================================================
-        // PAINTS
-        // =====================================================
 
         val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = DIVIDER
@@ -362,10 +318,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             textSize = height * 0.54f
         }
 
-        // =====================================================
-        // RPM BAR
-        // =====================================================
-
         val rpmTop = height * 0.06f
         val rpmBottom = height * 0.088f
         val rpmLeft = width * 0.08f
@@ -392,10 +344,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             canvas.drawRoundRect(RectF(left, rpmTop, right, rpmBottom), 2f, 2f, ledPaint)
         }
 
-        // =====================================================
-        // LAYOUT
-        // =====================================================
-
         val startY = rpmBottom + height * 0.10f
         val endY = height * 0.86f
         val gap = width * 0.02f
@@ -410,19 +358,11 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         val rxR = rxL + sideWidth
         val centerEndY = startY + (endY - startY) * 0.72f
 
-        // =====================================================
-        // GUIDE LINES
-        // =====================================================
-
         canvas.drawLine(lxL + width * 0.012f, startY, lxL + width * 0.012f, endY, guidePaint)
         canvas.drawLine(rxR - width * 0.012f, startY, rxR - width * 0.012f, endY, guidePaint)
         canvas.drawLine(cxL, startY, cxR, startY, softRedPaint)
         canvas.drawLine(cxL, startY, cxL, centerEndY, softRedPaint)
         canvas.drawLine(cxR, startY, cxR, centerEndY, softRedPaint)
-
-        // =====================================================
-        // SPEED / GEAR
-        // =====================================================
 
         val speedDividerY = startY + (centerEndY - startY) * 0.16f
         canvas.drawLine(cxL, speedDividerY, cxR, speedDividerY, dividerPaint)
@@ -433,20 +373,13 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         val gearY = speedDividerY + ((centerEndY - speedDividerY) * 0.60f)
         drawTextCentered(canvas, gear.toString(), (cxL + cxR) / 2f, gearY, gearPaint)
 
-        // =====================================================
-        // ROW DRAWING FUNCTION (Soporta colores dinámicos)
-        // =====================================================
-
         fun drawDataRow(slotRect: RectF, item: TelemetryItem) {
             val paddingX = width * 0.020f
 
-            // Dibujar Etiqueta
             canvas.drawText(item.label, slotRect.left + paddingX, slotRect.centerY(), labelPaint)
 
-            // Pincel para el número con su color dinámico
             val numberPaint = Paint(valuePaint).apply { color = item.dynamicColor }
 
-            // Pincel para la unidad
             val isDegree = item.unit.contains("°")
             val unitPaint = Paint(numberPaint).apply {
                 textSize = if (isDegree) numberPaint.textSize else numberPaint.textSize * 0.55f
@@ -456,23 +389,16 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             val spaceBetween = if (item.unit.isNotEmpty() && !isDegree) width * 0.005f else 0f
             val rightMargin = slotRect.right - paddingX
 
-            // Dibujar Unidad
             canvas.drawText(item.unit, rightMargin, slotRect.centerY() + height * 0.010f, unitPaint)
-
-            // Dibujar Número
             canvas.drawText(item.value, rightMargin - unitWidth - spaceBetween, slotRect.centerY() + height * 0.010f, numberPaint)
         }
 
-        // =====================================================
-        // LÓGICA DE COLORES DE ALERTAS (MOTOR)
-        // =====================================================
-
         val oilColor = when {
-            oilTemp >= 120f -> ALERT_RED         // Sobrecalentamiento crítico
-            oilTemp >= 110f -> ACCENT_ORANGE     // Muy caliente
-            oilTemp >= 85f -> TEXT_WHITE         // TEMPERATURA ÓPTIMA
-            oilTemp >= 70f -> ACCENT_ORANGE      // Calentando (no exigir)
-            else -> ALERT_RED                    // Aceite muy frío (peligro)
+            oilTemp >= 120f -> ALERT_RED
+            oilTemp >= 110f -> ACCENT_ORANGE
+            oilTemp >= 85f -> TEXT_WHITE
+            oilTemp >= 70f -> ACCENT_ORANGE
+            else -> ALERT_RED
         }
 
         val boostColor = when {
@@ -489,13 +415,12 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
 
         val throttleColor = if (throttlePercent >= 95f) ACCENT_ORANGE else TEXT_WHITE
 
-        // AFR: Sistema simétrico (Peligro tanto por exceso como por defecto)
         val afrColor = when {
-            afr >= 16.0f -> ALERT_RED            // Peligro: Extremadamente pobre
-            afr >= 15.2f -> ACCENT_ORANGE        // Aviso: Ligeramente pobre
-            afr > 11.5f -> TEXT_WHITE            // ZONA ÓPTIMA (Crucero y carga segura)
-            afr > 10.5f -> ACCENT_ORANGE         // Aviso: Ligeramente rico
-            else -> ALERT_RED                    // Peligro: Extremadamente rico (ahogándose)
+            afr >= 16.0f -> ALERT_RED
+            afr >= 15.2f -> ACCENT_ORANGE
+            afr > 11.5f -> TEXT_WHITE
+            afr > 10.5f -> ACCENT_ORANGE
+            else -> ALERT_RED
         }
 
         val loadColor = when {
@@ -509,12 +434,12 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         val mafColor = TEXT_WHITE
 
         // =====================================================
-        // LEFT PANEL
+        // LEFT PANEL (Actualizado a BOOST BAR)
         // =====================================================
 
         val leftData = listOf(
             TelemetryItem("OIL TEMP", "${oilTemp.toInt()}", "°", oilColor),
-            TelemetryItem("BOOST PSI", String.format("%.1f", turboPressure), "", boostColor),
+            TelemetryItem("BOOST BAR", String.format("%.1f", turboPressure), "", boostColor),
             TelemetryItem("INTAKE TEMP", "${intakeTemp.toInt()}", "°", intakeColor),
             TelemetryItem("THROTTLE", "${throttlePercent.toInt()}", "%", throttleColor)
         )
@@ -571,7 +496,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         private const val TAG = "MainScreen"
         private const val RENDER_THREAD_NAME = "IbizaCustomMapSurface"
 
-        // Ahora a ~30 FPS para que la animación sea súper fluida
         private const val REFRESH_TICK_MS = 33L
 
         private val BG_BLACK = Color.argb(255, 4, 4, 4)
@@ -582,7 +506,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         private val TEXT_GRAY = Color.argb(255, 120, 120, 120)
         private val DIVIDER = Color.argb(255, 45, 45, 45)
 
-        // Colores de Alerta
         private val ACCENT_ORANGE = Color.rgb(255, 120, 0)
         private val ALERT_RED = Color.rgb(255, 50, 50)
     }
