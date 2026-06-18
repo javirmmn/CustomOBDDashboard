@@ -31,7 +31,6 @@ class ObdManager(private val context: Context) {
         bluetoothAdapter = bluetoothManager.adapter
     }
 
-    // @SuppressLint evita que Android Studio se queje de los permisos, ya que los pedimos previamente en MainActivity
     @SuppressLint("MissingPermission")
     fun connect(): Boolean {
         if (bluetoothAdapter == null || !bluetoothAdapter!!.isEnabled) {
@@ -58,7 +57,7 @@ class ObdManager(private val context: Context) {
         return try {
             Log.d(TAG, "Conectando a: ${obdDevice.name}...")
             socket = obdDevice.createRfcommSocketToServiceRecord(OBD_UUID)
-            bluetoothAdapter?.cancelDiscovery() // Vital para evitar lag y caídas al conectar
+            bluetoothAdapter?.cancelDiscovery()
             socket?.connect()
 
             inputStream = socket?.inputStream
@@ -83,6 +82,58 @@ class ObdManager(private val context: Context) {
             Log.d(TAG, "Conexión cerrada de forma segura.")
         } catch (e: Exception) {
             Log.e(TAG, "Error cerrando la conexión: ${e.message}")
+        }
+    }
+
+    // =========================================================
+    // COMUNICACIÓN OBD2 (LEER Y ESCRIBIR)
+    // =========================================================
+
+    fun sendCommand(command: String) {
+        if (!isConnected || outputStream == null) return
+        try {
+            // Añadimos el retorno de carro (\r) que exige el protocolo ELM327
+            val cmdWithReturn = "$command\r"
+            outputStream?.write(cmdWithReturn.toByteArray())
+            outputStream?.flush()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error enviando comando: ${e.message}")
+            closeConnection()
+        }
+    }
+
+    fun readResponse(): String {
+        if (!isConnected || inputStream == null) return ""
+        try {
+            val buffer = ByteArray(1024)
+            var bytesRead: Int
+            val responseBuilder = java.lang.StringBuilder()
+
+            // Nos quedamos escuchando hasta que el aparato devuelva un '>'
+            while (true) {
+                bytesRead = inputStream!!.read(buffer)
+                if (bytesRead == -1) break
+
+                val chunk = String(buffer, 0, bytesRead)
+                responseBuilder.append(chunk)
+
+                if (chunk.contains(">")) {
+                    break
+                }
+            }
+
+            // Limpiamos los espacios, saltos de línea y la flecha '>' para dejar solo el hexadecimal puro
+            return responseBuilder.toString()
+                .replace(">", "")
+                .replace("\r", "")
+                .replace("\n", "")
+                .replace(" ", "")
+                .trim()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error leyendo respuesta: ${e.message}")
+            closeConnection()
+            return ""
         }
     }
 }
