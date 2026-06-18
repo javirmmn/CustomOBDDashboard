@@ -25,11 +25,22 @@ import androidx.lifecycle.LifecycleEventObserver
 
 class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
 
+    // =========================================================
+    // EL INTERRUPTOR MAESTRO
+    // =========================================================
+    // true -> Simulador en PC (Sin Bluetooth, sin cuelgues)
+    // false -> Coche real (Busca el OBD2)
+    private val MODO_SIMULACION = true
+
+    // Variables inicializadas como nulas (Lazy) para evitar cuelgues al arrancar
+    private var obdManager: ObdManager? = null
+    private var obdThread: Thread? = null
+
     @Volatile
     private var surfaceContainer: SurfaceContainer? = null
 
     // =========================================================
-    // TELEMETRÍA TEMPORAL (SIMULADOR)
+    // TELEMETRÍA (Memoria Compartida)
     // =========================================================
 
     private var speedKmh: Float = 0f
@@ -47,12 +58,10 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
     private var maf: Float = 10f
 
     private val telemetryLock = Any()
-
-    // Reloj interno del simulador
     private var simulationTick = 0f
 
     // =========================================================
-    // RENDER
+    // RENDER (CARRIL RÁPIDO)
     // =========================================================
 
     private val renderThread = HandlerThread(RENDER_THREAD_NAME).apply { start() }
@@ -63,37 +72,94 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         override fun run() {
             if (surfaceContainer == null) return
 
-            // --- INICIO DEL SIMULADOR MATEMÁTICO ---
-            simulationTick += 0.05f
+            // Si estamos simulando, actualizamos las matemáticas aquí
+            if (MODO_SIMULACION) {
+                simulationTick += 0.05f
 
-            val waveSlow = ((Math.sin(simulationTick.toDouble() * 0.5) + 1.0) / 2.0).toFloat()
-            val waveFast = ((Math.sin(simulationTick.toDouble() * 1.5) + 1.0) / 2.0).toFloat()
-            val waveAFR = ((Math.cos(simulationTick.toDouble() * 0.7) + 1.0) / 2.0).toFloat()
+                val waveSlow = ((Math.sin(simulationTick.toDouble() * 0.5) + 1.0) / 2.0).toFloat()
+                val waveFast = ((Math.sin(simulationTick.toDouble() * 1.5) + 1.0) / 2.0).toFloat()
+                val waveAFR = ((Math.cos(simulationTick.toDouble() * 0.7) + 1.0) / 2.0).toFloat()
 
-            synchronized(telemetryLock) {
-                activeLeds = (waveFast * 24f).toInt()
-
-                speedKmh = 60f + (waveSlow * 90f)
-                gear = when {
-                    speedKmh < 80 -> 3
-                    speedKmh < 120 -> 4
-                    else -> 5
+                synchronized(telemetryLock) {
+                    activeLeds = (waveFast * 24f).toInt()
+                    speedKmh = 60f + (waveSlow * 90f)
+                    gear = when {
+                        speedKmh < 80 -> 3
+                        speedKmh < 120 -> 4
+                        else -> 5
+                    }
+                    oilTemp = 60f + (waveSlow * 70f)
+                    turboPressure = -0.2f + (waveFast * 1.8f)
+                    intakeTemp = 25f + (waveSlow * 40f)
+                    throttlePercent = waveFast * 100f
+                    afr = 10.0f + (waveAFR * 6.5f)
+                    engineLoad = waveFast * 100f
+                    gForce = waveFast * 1.2f
+                    maf = 10f + (waveFast * 130f)
                 }
-
-                oilTemp = 60f + (waveSlow * 70f)
-                turboPressure = -0.2f + (waveFast * 1.8f) // Ya estaba calculado en Bares
-                intakeTemp = 25f + (waveSlow * 40f)
-                throttlePercent = waveFast * 100f
-                afr = 10.0f + (waveAFR * 6.5f)
-                engineLoad = waveFast * 100f
-                gForce = waveFast * 1.2f
-                maf = 10f + (waveFast * 130f)
             }
-            // --- FIN DEL SIMULADOR ---
 
             scheduleRedraw()
             renderHandler.postDelayed(this, REFRESH_TICK_MS)
         }
+    }
+
+    // =========================================================
+    // LECTURA OBD2 (CARRIL LENTO / SEGUNDO PLANO)
+    // =========================================================
+
+    private fun startObdPolling() {
+        obdThread = Thread {
+            while (!Thread.currentThread().isInterrupted) {
+                // Si estamos en simulación, este hilo se duerme y no molesta
+                if (MODO_SIMULACION) {
+                    Thread.sleep(1000)
+                    continue
+                }
+
+                // Inicializamos el Bluetooth solo si hace falta (Evita el ANR)
+                if (obdManager == null) {
+                    obdManager = ObdManager(carContext)
+                }
+
+                if (obdManager?.isConnected == false) {
+                    Log.d(TAG, "Buscando adaptador OBD2...")
+                    obdManager?.connect()
+                    if (obdManager?.isConnected == false) {
+                        Thread.sleep(2000)
+                        continue
+                    }
+                    // Configuración inicial del ELM327
+                    obdManager?.sendCommand("ATZ")
+                    Thread.sleep(500)
+                    obdManager?.sendCommand("ATSP0")
+                    Thread.sleep(500)
+                }
+
+                try {
+                    // Pedimos RPM
+                    obdManager?.sendCommand("01 0C")
+                    val rpmCalc = ObdDecoder.parseRPM(obdManager?.readResponse() ?: "")
+
+                    // Pedimos Presión Turbo
+                    obdManager?.sendCommand("01 0B")
+                    val boostCalc = ObdDecoder.parseBoost(obdManager?.readResponse() ?: "").toFloat()
+
+                    // Actualizamos memoria
+                    synchronized(telemetryLock) {
+                        if (rpmCalc > 0) activeLeds = (rpmCalc / 300).coerceIn(0, 24)
+                        turboPressure = boostCalc
+                    }
+
+                    // Pausa para no saturar el coche
+                    Thread.sleep(150)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error OBD2: ${e.message}")
+                    obdManager?.closeConnection()
+                }
+            }
+        }
+        obdThread?.start()
     }
 
     private var redrawInProgress = false
@@ -110,6 +176,9 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
 
     init {
+        // Arrancamos el hilo secundario
+        startObdPolling()
+
         carContext
             .getCarService(NavigationManager::class.java)
             .setNavigationManagerCallback(navigationManagerCallback)
@@ -126,6 +195,9 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                         getCarContext().getCarService(NavigationManager::class.java).clearNavigationManagerCallback()
                     } catch (_: Exception) {}
 
+                    // Limpieza segura de hilos y Bluetooth al cerrar la app
+                    obdThread?.interrupt()
+                    obdManager?.closeConnection()
                     renderHandler.removeCallbacksAndMessages(null)
                     renderThread.quitSafely()
                 }
@@ -434,7 +506,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         val mafColor = TEXT_WHITE
 
         // =====================================================
-        // LEFT PANEL (Actualizado a BOOST BAR)
+        // LEFT PANEL
         // =====================================================
 
         val leftData = listOf(
