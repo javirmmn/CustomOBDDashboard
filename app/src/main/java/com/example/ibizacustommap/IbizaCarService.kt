@@ -7,9 +7,14 @@ import androidx.car.app.validation.HostValidator
 
 class IbizaCarService : CarAppService() {
 
-    // Esto le dice a tu app que se fie de cualquier coche (ideal para desarrollo)
     override fun createHostValidator(): HostValidator {
-        return HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+        return if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+        } else {
+            HostValidator.Builder(applicationContext)
+                .addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample)
+                .build()
+        }
     }
 
     // Aquí le decimos qué sesión arrancar cuando nos conectamos al coche
