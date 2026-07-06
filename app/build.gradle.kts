@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.ibizacustommap"
+        applicationId = "com.javirmmn.customobddashboard"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
