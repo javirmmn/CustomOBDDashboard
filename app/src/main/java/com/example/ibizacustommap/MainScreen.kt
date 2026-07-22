@@ -22,29 +22,19 @@ import androidx.car.app.navigation.NavigationManagerCallback
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.example.ibizacustommap.BuildConfig
 
 class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
 
-    // =========================================================
-    // EL INTERRUPTOR MAESTRO
-    // =========================================================
-    // true -> Simulador en PC (Sin Bluetooth, sin cuelgues)
-    // false -> Coche real (Busca el OBD2)
-    private val MODO_SIMULACION = true
-
-    // Variables inicializadas como nulas (Lazy) para evitar cuelgues al arrancar
+    private var modoSimulacion = false
     private var obdManager: ObdManager? = null
     private var obdThread: Thread? = null
 
     @Volatile
     private var surfaceContainer: SurfaceContainer? = null
 
-    // =========================================================
-    // TELEMETRÍA (Memoria Compartida)
-    // =========================================================
-
     private var speedKmh: Float = 0f
-    private var gear: Int = 1
+    private var gearDisplay: String = "N"
     private var activeLeds: Int = 0
 
     private var oilTemp: Float = 90f
@@ -57,23 +47,39 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
     private var gForce: Float = 0f
     private var maf: Float = 10f
 
+    // VARIABLE CHIVATO DEBUG
+    private var debugRawResponse: String = "ESPERANDO..."
+
     private val telemetryLock = Any()
     private var simulationTick = 0f
-
-    // =========================================================
-    // RENDER (CARRIL RÁPIDO)
-    // =========================================================
 
     private val renderThread = HandlerThread(RENDER_THREAD_NAME).apply { start() }
     private val renderHandler = Handler(renderThread.looper)
     private val redrawRunnable = Runnable { performRedrawSurface() }
 
+    // Snapshot inmutable de telemetría para el hilo de render.
+    // Evita leer directamente las vars mutadas por el hilo OBD sin lock.
+    private data class TelemetrySnapshot(
+        val speedKmh: Float,
+        val gearDisplay: String,
+        val activeLeds: Int,
+        val oilTemp: Float,
+        val turboPressure: Float,
+        val intakeTemp: Float,
+        val throttlePercent: Float,
+        val afr: Float,
+        val engineLoad: Float,
+        val gForce: Float,
+        val maf: Float,
+        val debugRawResponse: String,
+        val modoSimulacion: Boolean,
+    )
+
     private val refreshTickerRunnable = object : Runnable {
         override fun run() {
             if (surfaceContainer == null) return
 
-            // Si estamos simulando, actualizamos las matemáticas aquí
-            if (MODO_SIMULACION) {
+            if (modoSimulacion) {
                 simulationTick += 0.05f
 
                 val waveSlow = ((Math.sin(simulationTick.toDouble() * 0.5) + 1.0) / 2.0).toFloat()
@@ -83,11 +89,16 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                 synchronized(telemetryLock) {
                     activeLeds = (waveFast * 24f).toInt()
                     speedKmh = 60f + (waveSlow * 90f)
-                    gear = when {
-                        speedKmh < 80 -> 3
-                        speedKmh < 120 -> 4
-                        else -> 5
+
+                    gearDisplay = when {
+                        speedKmh < 3 -> "N"
+                        speedKmh < 30 -> "1"
+                        speedKmh < 60 -> "2"
+                        speedKmh < 90 -> "3"
+                        speedKmh < 120 -> "4"
+                        else -> "5"
                     }
+
                     oilTemp = 60f + (waveSlow * 70f)
                     turboPressure = -0.2f + (waveFast * 1.8f)
                     intakeTemp = 25f + (waveSlow * 40f)
@@ -104,58 +115,187 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
     }
 
-    // =========================================================
-    // LECTURA OBD2 (CARRIL LENTO / SEGUNDO PLANO)
-    // =========================================================
-
     private fun startObdPolling() {
         obdThread = Thread {
+            if (obdManager == null) {
+                obdManager = ObdManager(carContext)
+            }
+
+            Log.d(TAG, "Iniciando búsqueda de adaptador OBD2...")
+            var attempts = 0
+            var connected = false
+
+            while (!connected && attempts < 5 && !Thread.currentThread().isInterrupted) {
+                connected = obdManager?.connect() == true
+                if (!connected) {
+                    attempts++
+                    Thread.sleep(1000)
+                }
+            }
+
+            modoSimulacion = !connected
+
+            if (modoSimulacion) {
+                Log.d(TAG, "Activando MODO SIMULACIÓN automático.")
+            } else {
+                Log.d(TAG, "¡OBD2 Conectado! Ejecutando rutina de inicialización estricta.")
+                try {
+                    obdManager?.sendCommand("ATZ")
+                    Thread.sleep(800)
+                    obdManager?.readResponse()
+
+                    obdManager?.sendCommand("ATE0")
+                    Thread.sleep(300)
+                    obdManager?.readResponse()
+
+                    obdManager?.sendCommand("ATH0")
+                    Thread.sleep(300)
+                    obdManager?.readResponse()
+
+                    obdManager?.sendCommand("ATS0")
+                    Thread.sleep(300)
+                    obdManager?.readResponse()
+
+                    obdManager?.sendCommand("ATSP0")
+                    Thread.sleep(500)
+                    obdManager?.readResponse()
+
+                    // IMPORTANTE: se elimina ATSH7E0.
+                    // Forzar cabecera 11-bit rompía la comunicación en buses
+                    // CAN de 29-bit (frecuente en VAG). Dejamos que ATSP0
+                    // autodetecte el protocolo contra la dirección funcional
+                    // por defecto en la primera petición Mode 01 real.
+
+                    obdManager?.sendCommand("ATDPN")
+                    Thread.sleep(300)
+                    val protocoloDetectado = obdManager?.readResponse() ?: "?"
+                    Log.d(TAG, "Protocolo autodetectado (ATDPN): $protocoloDetectado")
+
+                    Log.d(TAG, "Inicialización completada. Empezando a pedir datos...")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error iniciando el chip ELM327: ${e.message}")
+                    modoSimulacion = true
+                }
+            }
+
+            var loopCounter = 0
+
             while (!Thread.currentThread().isInterrupted) {
-                // Si estamos en simulación, este hilo se duerme y no molesta
-                if (MODO_SIMULACION) {
+                if (modoSimulacion) {
                     Thread.sleep(1000)
                     continue
                 }
 
-                // Inicializamos el Bluetooth solo si hace falta (Evita el ANR)
-                if (obdManager == null) {
-                    obdManager = ObdManager(carContext)
-                }
-
-                if (obdManager?.isConnected == false) {
-                    Log.d(TAG, "Buscando adaptador OBD2...")
-                    obdManager?.connect()
-                    if (obdManager?.isConnected == false) {
-                        Thread.sleep(2000)
-                        continue
-                    }
-                    // Configuración inicial del ELM327
-                    obdManager?.sendCommand("ATZ")
-                    Thread.sleep(500)
-                    obdManager?.sendCommand("ATSP0")
-                    Thread.sleep(500)
-                }
-
                 try {
-                    // Pedimos RPM
-                    obdManager?.sendCommand("01 0C")
-                    val rpmCalc = ObdDecoder.parseRPM(obdManager?.readResponse() ?: "")
+                    // --- CARRIL RÁPIDO ---
 
-                    // Pedimos Presión Turbo
+                    obdManager?.sendCommand("01 0C")
+                    val rawRpm = obdManager?.readResponse() ?: "VACIO"
+                    val rpmCalc = ObdDecoder.parseRPM(rawRpm)
+
+                    synchronized(telemetryLock) {
+                        debugRawResponse = rawRpm
+                    }
+                    Thread.sleep(40)
+
+                    obdManager?.sendCommand("01 0D")
+                    val speedCalc = ObdDecoder.parseSpeed(obdManager?.readResponse() ?: "").toFloat()
+                    Thread.sleep(40)
+
                     obdManager?.sendCommand("01 0B")
                     val boostCalc = ObdDecoder.parseBoost(obdManager?.readResponse() ?: "").toFloat()
+                    Thread.sleep(40)
 
-                    // Actualizamos memoria
-                    synchronized(telemetryLock) {
-                        if (rpmCalc > 0) activeLeds = (rpmCalc / 300).coerceIn(0, 24)
-                        turboPressure = boostCalc
+                    var currentGear = "N"
+                    if (speedCalc >= 0f && rpmCalc >= 0) {
+                        if (speedCalc < 3f) {
+                            currentGear = "N"
+                        } else {
+                            val ratio = rpmCalc / speedCalc
+                            currentGear = when {
+                                ratio < 20f -> "N"
+                                ratio > 110f -> "1"
+                                ratio in 70f..110f -> "2"
+                                ratio in 48f..70f -> "3"
+                                ratio in 35f..48f -> "4"
+                                ratio in 26f..35f -> "5"
+                                ratio in 20f..26f -> "6"
+                                else -> "N"
+                            }
+                        }
                     }
 
-                    // Pausa para no saturar el coche
-                    Thread.sleep(150)
+                    // --- CARRIL LENTO ---
+                    var newOil = oilTemp
+                    var newIntake = intakeTemp
+                    var newLoad = engineLoad
+                    var newMaf = maf
+                    var newAfr = afr
+                    var newThrottle = throttlePercent
+
+                    if (loopCounter % 10 == 0) {
+                        obdManager?.sendCommand("01 11")
+                        val throttleCalc = ObdDecoder.parsePercentage(obdManager?.readResponse() ?: "", "11").toFloat()
+                        if (throttleCalc >= 0f) newThrottle = throttleCalc
+                        Thread.sleep(40)
+
+                        obdManager?.sendCommand("01 5C")
+                        var tRaw = obdManager?.readResponse() ?: ""
+                        var tCalc = ObdDecoder.parseTemp(tRaw, "5C").toFloat()
+                        if (tCalc <= -100f) {
+                            obdManager?.sendCommand("01 05")
+                            tRaw = obdManager?.readResponse() ?: ""
+                            tCalc = ObdDecoder.parseTemp(tRaw, "05").toFloat()
+                        }
+                        if (tCalc > -100f) newOil = tCalc
+                        Thread.sleep(40)
+
+                        obdManager?.sendCommand("01 0F")
+                        val intakeC = ObdDecoder.parseTemp(obdManager?.readResponse() ?: "", "0F").toFloat()
+                        if (intakeC > -100f) newIntake = intakeC
+                        Thread.sleep(40)
+
+                        obdManager?.sendCommand("01 04")
+                        val loadC = ObdDecoder.parsePercentage(obdManager?.readResponse() ?: "", "04").toFloat()
+                        if (loadC >= 0f) newLoad = loadC
+                        Thread.sleep(40)
+
+                        obdManager?.sendCommand("01 10")
+                        val mafC = ObdDecoder.parseMAF(obdManager?.readResponse() ?: "").toFloat()
+                        if (mafC >= 0f) newMaf = mafC
+                        Thread.sleep(40)
+
+                        obdManager?.sendCommand("01 44")
+                        val afrC = ObdDecoder.parseAFR(obdManager?.readResponse() ?: "").toFloat()
+                        if (afrC > 0f) newAfr = afrC
+                        Thread.sleep(40)
+                    }
+
+                    synchronized(telemetryLock) {
+                        if (rpmCalc >= 0) activeLeds = (rpmCalc / 300).coerceIn(0, 24)
+                        if (speedCalc >= 0f) speedKmh = speedCalc
+                        if (boostCalc > -100f) turboPressure = boostCalc
+                        gearDisplay = currentGear
+
+                        if (loopCounter % 10 == 0) {
+                            throttlePercent = newThrottle
+                            oilTemp = newOil
+                            intakeTemp = newIntake
+                            engineLoad = newLoad
+                            maf = newMaf
+                            afr = newAfr
+                        }
+                    }
+
+                    loopCounter++
+                    if (loopCounter > 1000) loopCounter = 0
+
+                    Thread.sleep(50)
+
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error OBD2: ${e.message}")
+                    Log.e(TAG, "Conexión OBD2 perdida en marcha: ${e.message}")
                     obdManager?.closeConnection()
+                    modoSimulacion = true
                 }
             }
         }
@@ -176,7 +316,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
 
     init {
-        // Arrancamos el hilo secundario
         startObdPolling()
 
         carContext
@@ -195,7 +334,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                         getCarContext().getCarService(NavigationManager::class.java).clearNavigationManagerCallback()
                     } catch (_: Exception) {}
 
-                    // Limpieza segura de hilos y Bluetooth al cerrar la app
                     obdThread?.interrupt()
                     obdManager?.closeConnection()
                     renderHandler.removeCallbacksAndMessages(null)
@@ -294,6 +432,27 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             return
         }
 
+        // Snapshot bajo lock: garantiza visibilidad de memoria entre el
+        // hilo OBD (escritor) y el render thread (lector).
+        val snapshot: TelemetrySnapshot
+        synchronized(telemetryLock) {
+            snapshot = TelemetrySnapshot(
+                speedKmh = speedKmh,
+                gearDisplay = gearDisplay,
+                activeLeds = activeLeds,
+                oilTemp = oilTemp,
+                turboPressure = turboPressure,
+                intakeTemp = intakeTemp,
+                throttlePercent = throttlePercent,
+                afr = afr,
+                engineLoad = engineLoad,
+                gForce = gForce,
+                maf = maf,
+                debugRawResponse = debugRawResponse,
+                modoSimulacion = modoSimulacion,
+            )
+        }
+
         val canvas: Canvas? =
             try {
                 surface.lockHardwareCanvas()
@@ -307,7 +466,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
 
         try {
-            drawGt3Dashboard(canvas, w, h)
+            drawGt3Dashboard(canvas, w, h, snapshot)
         } catch (e: Exception) {
             Log.e(TAG, "Draw error", e)
         } finally {
@@ -341,6 +500,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         canvas: Canvas,
         width: Int,
         height: Int,
+        s: TelemetrySnapshot,
     ) {
         canvas.drawColor(BG_BLACK)
 
@@ -401,7 +561,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         for (i in 0 until ledCount) {
             val left = rpmLeft + i * (ledWidth + ledGap)
             val right = left + ledWidth
-            val active = i < activeLeds
+            val active = i < s.activeLeds
 
             val color = when {
                 i > 20 -> ALERT_RED
@@ -440,14 +600,13 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         canvas.drawLine(cxL, speedDividerY, cxR, speedDividerY, dividerPaint)
         val speedY = startY + (speedDividerY - startY) * 0.48f
 
-        drawTextCentered(canvas, speedKmh.toInt().toString(), (cxL + cxR) / 2f, speedY, speedPaint)
+        drawTextCentered(canvas, s.speedKmh.toInt().toString(), (cxL + cxR) / 2f, speedY, speedPaint)
 
         val gearY = speedDividerY + ((centerEndY - speedDividerY) * 0.60f)
-        drawTextCentered(canvas, gear.toString(), (cxL + cxR) / 2f, gearY, gearPaint)
+        drawTextCentered(canvas, s.gearDisplay, (cxL + cxR) / 2f, gearY, gearPaint)
 
         fun drawDataRow(slotRect: RectF, item: TelemetryItem) {
             val paddingX = width * 0.020f
-
             canvas.drawText(item.label, slotRect.left + paddingX, slotRect.centerY(), labelPaint)
 
             val numberPaint = Paint(valuePaint).apply { color = item.dynamicColor }
@@ -466,54 +625,50 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
 
         val oilColor = when {
-            oilTemp >= 120f -> ALERT_RED
-            oilTemp >= 110f -> ACCENT_ORANGE
-            oilTemp >= 85f -> TEXT_WHITE
-            oilTemp >= 70f -> ACCENT_ORANGE
+            s.oilTemp >= 120f -> ALERT_RED
+            s.oilTemp >= 110f -> ACCENT_ORANGE
+            s.oilTemp >= 85f -> TEXT_WHITE
+            s.oilTemp >= 70f -> ACCENT_ORANGE
             else -> ALERT_RED
         }
 
         val boostColor = when {
-            turboPressure >= 1.4f -> ALERT_RED
-            turboPressure >= 1.2f -> ACCENT_ORANGE
+            s.turboPressure >= 1.4f -> ALERT_RED
+            s.turboPressure >= 1.2f -> ACCENT_ORANGE
             else -> TEXT_WHITE
         }
 
         val intakeColor = when {
-            intakeTemp >= 55f -> ALERT_RED
-            intakeTemp >= 45f -> ACCENT_ORANGE
+            s.intakeTemp >= 55f -> ALERT_RED
+            s.intakeTemp >= 45f -> ACCENT_ORANGE
             else -> TEXT_WHITE
         }
 
-        val throttleColor = if (throttlePercent >= 95f) ACCENT_ORANGE else TEXT_WHITE
+        val throttleColor = if (s.throttlePercent >= 95f) ACCENT_ORANGE else TEXT_WHITE
 
         val afrColor = when {
-            afr >= 16.0f -> ALERT_RED
-            afr >= 15.2f -> ACCENT_ORANGE
-            afr > 11.5f -> TEXT_WHITE
-            afr > 10.5f -> ACCENT_ORANGE
+            s.afr >= 16.0f -> ALERT_RED
+            s.afr >= 15.2f -> ACCENT_ORANGE
+            s.afr > 11.5f -> TEXT_WHITE
+            s.afr > 10.5f -> ACCENT_ORANGE
             else -> ALERT_RED
         }
 
         val loadColor = when {
-            engineLoad >= 95f -> ALERT_RED
-            engineLoad >= 85f -> ACCENT_ORANGE
+            s.engineLoad >= 95f -> ALERT_RED
+            s.engineLoad >= 85f -> ACCENT_ORANGE
             else -> TEXT_WHITE
         }
 
-        val gForceColor = if (gForce >= 1.0f) ACCENT_ORANGE else TEXT_WHITE
+        val gForceColor = if (s.gForce >= 1.0f) ACCENT_ORANGE else TEXT_WHITE
 
         val mafColor = TEXT_WHITE
 
-        // =====================================================
-        // LEFT PANEL
-        // =====================================================
-
         val leftData = listOf(
-            TelemetryItem("OIL TEMP", "${oilTemp.toInt()}", "°", oilColor),
-            TelemetryItem("BOOST BAR", String.format("%.1f", turboPressure), "", boostColor),
-            TelemetryItem("INTAKE TEMP", "${intakeTemp.toInt()}", "°", intakeColor),
-            TelemetryItem("THROTTLE", "${throttlePercent.toInt()}", "%", throttleColor)
+            TelemetryItem("OIL TEMP", "${s.oilTemp.toInt()}", "°", oilColor),
+            TelemetryItem("BOOST BAR", String.format("%.1f", s.turboPressure), "", boostColor),
+            TelemetryItem("INTAKE TEMP", "${s.intakeTemp.toInt()}", "°", intakeColor),
+            TelemetryItem("THROTTLE", "${s.throttlePercent.toInt()}", "%", throttleColor)
         )
 
         val rowHeight = (endY - startY) / leftData.size
@@ -529,15 +684,11 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             }
         }
 
-        // =====================================================
-        // RIGHT PANEL
-        // =====================================================
-
         val rightData = listOf(
-            TelemetryItem("AFR", String.format("%.1f", afr), "", afrColor),
-            TelemetryItem("ENG LOAD", "${engineLoad.toInt()}", "%", loadColor),
-            TelemetryItem("G-FORCE", String.format("%.1f", gForce), "", gForceColor),
-            TelemetryItem("MAF", "${maf.toInt()}", "G/S", mafColor)
+            TelemetryItem("AFR", String.format("%.1f", s.afr), "", afrColor),
+            TelemetryItem("ENG LOAD", "${s.engineLoad.toInt()}", "%", loadColor),
+            TelemetryItem("G-FORCE", String.format("%.1f", s.gForce), "", gForceColor),
+            TelemetryItem("MAF", "${s.maf.toInt()}", "G/S", mafColor)
         )
 
         rightData.forEachIndexed { index, item ->
@@ -549,6 +700,27 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             if (index < rightData.size - 1) {
                 canvas.drawLine(rxL + width * 0.010f, slotRect.bottom, rxR - width * 0.010f, slotRect.bottom, dividerPaint)
             }
+        }
+
+        // =====================================================
+        // CHIVATO DEBUG — esquina superior izquierda, pequeño,
+        // fuera de zona de datos. Solo visible en builds de debug.
+        // =====================================================
+        if (BuildConfig.DEBUG) {
+            val debugPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.YELLOW
+                typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                textSize = height * 0.025f
+                textAlign = Paint.Align.LEFT
+            }
+
+            val displayText = if (s.modoSimulacion) {
+                "SIM_OK"
+            } else {
+                "RX: ${s.debugRawResponse}"
+            }
+
+            canvas.drawText(displayText, width * 0.02f, height * 0.045f, debugPaint)
         }
     }
 
@@ -567,7 +739,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
     private companion object {
         private const val TAG = "MainScreen"
         private const val RENDER_THREAD_NAME = "IbizaCustomMapSurface"
-
         private const val REFRESH_TICK_MS = 33L
 
         private val BG_BLACK = Color.argb(255, 4, 4, 4)

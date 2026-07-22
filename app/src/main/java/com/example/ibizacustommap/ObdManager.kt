@@ -14,7 +14,6 @@ class ObdManager(private val context: Context) {
 
     companion object {
         private const val TAG = "ObdManager"
-        // UUID estándar universal (SPP) para aparatos OBD2
         private val OBD_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     }
 
@@ -38,7 +37,6 @@ class ObdManager(private val context: Context) {
             return false
         }
 
-        // 1. Buscar entre los dispositivos Bluetooth ya vinculados al móvil
         val pairedDevices = bluetoothAdapter!!.bondedDevices
         val obdDevice = pairedDevices.find { device ->
             val name = device.name ?: ""
@@ -48,12 +46,8 @@ class ObdManager(private val context: Context) {
                     name.contains("Vgate", ignoreCase = true)
         }
 
-        if (obdDevice == null) {
-            Log.e(TAG, "No se encontró ningún escáner OBD2 emparejado en el móvil.")
-            return false
-        }
+        if (obdDevice == null) return false
 
-        // 2. Intentar abrir el túnel de datos RFCOMM
         return try {
             Log.d(TAG, "Conectando a: ${obdDevice.name}...")
             socket = obdDevice.createRfcommSocketToServiceRecord(OBD_UUID)
@@ -64,7 +58,7 @@ class ObdManager(private val context: Context) {
             outputStream = socket?.outputStream
             isConnected = true
 
-            Log.d(TAG, "¡Túnel Bluetooth abierto con éxito!")
+            Log.d(TAG, "Túnel abierto. No inicializamos aquí, lo hará MainScreen.")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Fallo al conectar: ${e.message}")
@@ -79,20 +73,16 @@ class ObdManager(private val context: Context) {
             inputStream?.close()
             outputStream?.close()
             isConnected = false
-            Log.d(TAG, "Conexión cerrada de forma segura.")
+            Log.d(TAG, "Conexión cerrada.")
         } catch (e: Exception) {
-            Log.e(TAG, "Error cerrando la conexión: ${e.message}")
+            Log.e(TAG, "Error cerrando: ${e.message}")
         }
     }
-
-    // =========================================================
-    // COMUNICACIÓN OBD2 (LEER Y ESCRIBIR)
-    // =========================================================
 
     fun sendCommand(command: String) {
         if (!isConnected || outputStream == null) return
         try {
-            // Añadimos el retorno de carro (\r) que exige el protocolo ELM327
+            Log.d(TAG, "TX (Enviando): $command")
             val cmdWithReturn = "$command\r"
             outputStream?.write(cmdWithReturn.toByteArray())
             outputStream?.flush()
@@ -106,34 +96,60 @@ class ObdManager(private val context: Context) {
         if (!isConnected || inputStream == null) return ""
         try {
             val buffer = ByteArray(1024)
-            var bytesRead: Int
             val responseBuilder = java.lang.StringBuilder()
 
-            // Nos quedamos escuchando hasta que el aparato devuelva un '>'
-            while (true) {
-                bytesRead = inputStream!!.read(buffer)
-                if (bytesRead == -1) break
+            // SISTEMA ANTI-BLOQUEO (TIMEOUT DE 1.5 SEGUNDOS)
+            val startTime = System.currentTimeMillis()
+            val timeoutMs = 1500L
 
-                val chunk = String(buffer, 0, bytesRead)
-                responseBuilder.append(chunk)
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
+                if (inputStream!!.available() > 0) {
+                    val bytesRead = inputStream!!.read(buffer)
+                    if (bytesRead == -1) break
 
-                if (chunk.contains(">")) {
-                    break
+                    val chunk = String(buffer, 0, bytesRead)
+                    responseBuilder.append(chunk)
+
+                    if (chunk.contains(">")) {
+                        break // Fin de la lectura correcta
+                    }
+                } else {
+                    Thread.sleep(10) // Evita saturar el procesador mientras espera
                 }
             }
 
-            // Limpiamos los espacios, saltos de línea y la flecha '>' para dejar solo el hexadecimal puro
-            return responseBuilder.toString()
+            val rawResponse = responseBuilder.toString()
+            Log.d(TAG, "RX (Respuesta cruda): $rawResponse")
+
+            // Si ha saltado el tiempo y no hay flecha, el coche no ha respondido
+            if (!rawResponse.contains(">")) {
+                Log.w(TAG, "¡TIMEOUT! El escáner no devolvió '>' a tiempo.")
+                return "TIMEOUT"
+            }
+
+            // Limpieza: caracteres de control + mensajes asíncronos del ELM327
+            // que pueden ir pegados delante/detrás de la trama hexadecimal real
+            // (típicos mientras ATSP0 aún está negociando protocolo).
+            val cleanResponse = rawResponse
                 .replace(">", "")
                 .replace("\r", "")
                 .replace("\n", "")
                 .replace(" ", "")
+                .replace("SEARCHING...", "")
+                .replace("SEARCHING", "")
+                .replace("STOPPED", "")
+                .replace("BUSINIT", "")
+                .replace("BUS INIT", "")
                 .trim()
 
+            Log.d(TAG, "RX (Respuesta limpia): $cleanResponse")
+
+            return cleanResponse
+
         } catch (e: Exception) {
-            Log.e(TAG, "Error leyendo respuesta: ${e.message}")
+            Log.e(TAG, "Error leyendo: ${e.message}")
             closeConnection()
-            return ""
+            return "ERROR"
         }
     }
 }
