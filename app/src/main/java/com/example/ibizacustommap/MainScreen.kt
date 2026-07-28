@@ -47,8 +47,10 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
     private var gForce: Float = 0f
     private var maf: Float = 10f
 
-    // VARIABLE CHIVATO DEBUG
+    // VARIABLES CHIVATO DEBUG
     private var debugRawResponse: String = "ESPERANDO..."
+    private var debugMafRaw: String = "-"
+    private var debugAfrRaw: String = "-"
 
     private val telemetryLock = Any()
     private var simulationTick = 0f
@@ -72,6 +74,8 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         val gForce: Float,
         val maf: Float,
         val debugRawResponse: String,
+        val debugMafRaw: String,
+        val debugAfrRaw: String,
         val modoSimulacion: Boolean,
     )
 
@@ -160,11 +164,8 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                     Thread.sleep(500)
                     obdManager?.readResponse()
 
-                    // IMPORTANTE: se elimina ATSH7E0.
-                    // Forzar cabecera 11-bit rompía la comunicación en buses
-                    // CAN de 29-bit (frecuente en VAG). Dejamos que ATSP0
-                    // autodetecte el protocolo contra la dirección funcional
-                    // por defecto en la primera petición Mode 01 real.
+                    // Sin ATSH7E0: dejamos que ATSP0 autodetecte protocolo
+                    // contra la dirección funcional por defecto.
 
                     obdManager?.sendCommand("ATDPN")
                     Thread.sleep(300)
@@ -260,14 +261,28 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                         if (loadC >= 0f) newLoad = loadC
                         Thread.sleep(40)
 
+                        // MAF: timeout corto (FAST_TIMEOUT_MS). Si tu ECU no lo
+                        // soporta, no queremos que arrastre 1.5s el bucle entero.
                         obdManager?.sendCommand("01 10")
-                        val mafC = ObdDecoder.parseMAF(obdManager?.readResponse() ?: "").toFloat()
+                        val rawMaf = obdManager?.readResponse(ObdManager.FAST_TIMEOUT_MS) ?: "VACIO"
+                        val mafC = ObdDecoder.parseMAF(rawMaf).toFloat()
+                        synchronized(telemetryLock) { debugMafRaw = rawMaf }
                         if (mafC >= 0f) newMaf = mafC
                         Thread.sleep(40)
 
+                        // AFR: primero PID 44 (Commanded Equivalence Ratio).
+                        // Si no responde, fallback a PID 34 (O2 Sensor Equivalence Ratio).
                         obdManager?.sendCommand("01 44")
-                        val afrC = ObdDecoder.parseAFR(obdManager?.readResponse() ?: "").toFloat()
-                        if (afrC > 0f) newAfr = afrC
+                        var rawAfr = obdManager?.readResponse(ObdManager.FAST_TIMEOUT_MS) ?: "VACIO"
+                        var afrC = ObdDecoder.parseAFR(rawAfr, "44")
+                        if (afrC <= 0.0) {
+                            Thread.sleep(40)
+                            obdManager?.sendCommand("01 34")
+                            rawAfr = obdManager?.readResponse(ObdManager.FAST_TIMEOUT_MS) ?: "VACIO"
+                            afrC = ObdDecoder.parseAFR(rawAfr, "34")
+                        }
+                        synchronized(telemetryLock) { debugAfrRaw = rawAfr }
+                        if (afrC > 0.0) newAfr = afrC.toFloat()
                         Thread.sleep(40)
                     }
 
@@ -432,8 +447,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             return
         }
 
-        // Snapshot bajo lock: garantiza visibilidad de memoria entre el
-        // hilo OBD (escritor) y el render thread (lector).
         val snapshot: TelemetrySnapshot
         synchronized(telemetryLock) {
             snapshot = TelemetrySnapshot(
@@ -449,6 +462,8 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                 gForce = gForce,
                 maf = maf,
                 debugRawResponse = debugRawResponse,
+                debugMafRaw = debugMafRaw,
+                debugAfrRaw = debugAfrRaw,
                 modoSimulacion = modoSimulacion,
             )
         }
@@ -624,12 +639,15 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             canvas.drawText(item.value, rightMargin - unitWidth - spaceBetween, slotRect.centerY() + height * 0.010f, numberPaint)
         }
 
+        // FIX: la temperatura de aceite ya no marca rojo por defecto cuando
+        // el motor está frío/templado. Rojo solo en sobrecalentamiento real
+        // o si el sensor da un valor claramente erróneo.
         val oilColor = when {
             s.oilTemp >= 120f -> ALERT_RED
             s.oilTemp >= 110f -> ACCENT_ORANGE
-            s.oilTemp >= 85f -> TEXT_WHITE
-            s.oilTemp >= 70f -> ACCENT_ORANGE
-            else -> ALERT_RED
+            s.oilTemp in 70f..110f -> TEXT_WHITE
+            s.oilTemp in 20f..70f -> ACCENT_ORANGE // motor calentando, aviso suave
+            else -> TEXT_GRAY // valor fuera de rango físico razonable
         }
 
         val boostColor = when {
@@ -705,19 +723,21 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         // =====================================================
         // CHIVATO DEBUG — esquina superior izquierda, pequeño,
         // fuera de zona de datos. Solo visible en builds de debug.
+        // Ahora incluye MAF y AFR crudos para diagnosticar PIDs
+        // no soportados.
         // =====================================================
         if (BuildConfig.DEBUG) {
             val debugPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.YELLOW
                 typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-                textSize = height * 0.025f
+                textSize = height * 0.022f
                 textAlign = Paint.Align.LEFT
             }
 
             val displayText = if (s.modoSimulacion) {
                 "SIM_OK"
             } else {
-                "RX: ${s.debugRawResponse}"
+                "RPM:${s.debugRawResponse} MAF:${s.debugMafRaw} AFR:${s.debugAfrRaw}"
             }
 
             canvas.drawText(displayText, width * 0.02f, height * 0.045f, debugPaint)
@@ -742,7 +762,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         private const val REFRESH_TICK_MS = 33L
 
         private val BG_BLACK = Color.argb(255, 4, 4, 4)
-        private val RACING_RED = Color.argb(255, 180, 0, 0)
         private val SOFT_RED = Color.argb(255, 90, 0, 0)
         private val DARK_RED = Color.argb(255, 45, 0, 0)
         private val TEXT_WHITE = Color.argb(255, 240, 240, 240)

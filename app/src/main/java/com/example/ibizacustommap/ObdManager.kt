@@ -15,6 +15,8 @@ class ObdManager(private val context: Context) {
     companion object {
         private const val TAG = "ObdManager"
         private val OBD_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        const val DEFAULT_TIMEOUT_MS = 1500L
+        const val FAST_TIMEOUT_MS = 500L // Para PIDs opcionales que pueden no estar soportados
     }
 
     private var bluetoothAdapter: BluetoothAdapter? = null
@@ -92,15 +94,13 @@ class ObdManager(private val context: Context) {
         }
     }
 
-    fun readResponse(): String {
+    fun readResponse(timeoutMs: Long = DEFAULT_TIMEOUT_MS): String {
         if (!isConnected || inputStream == null) return ""
         try {
             val buffer = ByteArray(1024)
             val responseBuilder = java.lang.StringBuilder()
 
-            // SISTEMA ANTI-BLOQUEO (TIMEOUT DE 1.5 SEGUNDOS)
             val startTime = System.currentTimeMillis()
-            val timeoutMs = 1500L
 
             while (System.currentTimeMillis() - startTime < timeoutMs) {
                 if (inputStream!!.available() > 0) {
@@ -121,15 +121,11 @@ class ObdManager(private val context: Context) {
             val rawResponse = responseBuilder.toString()
             Log.d(TAG, "RX (Respuesta cruda): $rawResponse")
 
-            // Si ha saltado el tiempo y no hay flecha, el coche no ha respondido
             if (!rawResponse.contains(">")) {
                 Log.w(TAG, "¡TIMEOUT! El escáner no devolvió '>' a tiempo.")
                 return "TIMEOUT"
             }
 
-            // Limpieza: caracteres de control + mensajes asíncronos del ELM327
-            // que pueden ir pegados delante/detrás de la trama hexadecimal real
-            // (típicos mientras ATSP0 aún está negociando protocolo).
             val cleanResponse = rawResponse
                 .replace(">", "")
                 .replace("\r", "")
