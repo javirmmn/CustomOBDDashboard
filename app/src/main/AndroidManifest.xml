@@ -34,6 +34,17 @@
             </intent-filter>
         </activity>
 
+        <!-- Vista previa TEMPORAL del salpicadero en el móvil (lanzada desde
+             un botón en MainActivity, en todas las compilaciones). No expuesta
+             a otras apps. Quitar cuando exista el diseño definitivo de la UI
+             móvil (Fase 8). -->
+        <activity
+            android:name=".DashboardPreviewActivity"
+            android:exported="false"
+            android:label="Vista previa (debug)"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.IbizaCustomMap" />
+
         <meta-data
             android:name="androidx.car.app.minCarApiLevel"
             android:value="1" />

@@ -27,13 +27,14 @@ object ObdDecoder {
         } catch (e: Exception) { -1 }
     }
 
-    fun parseMAF(response: String): Int {
-        if (!response.startsWith("4110") || response.length < 8) return -1
+    // g/s con resolución 0.01 (antes se truncaba a entero: al ralentí perdía hasta un 30 %).
+    fun parseMAF(response: String): Double {
+        if (!response.startsWith("4110") || response.length < 8) return -1.0
         return try {
             val a = response.substring(4, 6).toInt(16)
             val b = response.substring(6, 8).toInt(16)
-            ((a * 256) + b) / 100
-        } catch (e: Exception) { -1 }
+            ((a * 256) + b) / 100.0
+        } catch (e: Exception) { -1.0 }
     }
 
     fun parseBoost(response: String): Double {

@@ -1,6 +1,7 @@
 package com.example.ibizacustommap
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -116,6 +118,25 @@ fun MainAppScreen(permissionsGranted: Boolean, onRequestPermissions: () -> Unit)
                 color = mutedText,
                 fontSize = 12.sp
             )
+
+            // Vista previa TEMPORAL del salpicadero (modo simulación) directamente
+            // en el móvil, sin depender de Android Auto ni del Desktop Head Unit.
+            // Disponible en todas las compilaciones (release incluida); se
+            // quitará al diseñar la UI móvil definitiva (Fase 8 del plan).
+            Spacer(modifier = Modifier.height(40.dp))
+            val context = LocalContext.current
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(Intent(context, DashboardPreviewActivity::class.java))
+                },
+            ) {
+                Text(
+                    text = "VISTA PREVIA DEL SALPICADERO",
+                    color = mutedText,
+                    fontSize = 12.sp,
+                    letterSpacing = 1.sp,
+                )
+            }
         } else {
             Text(
                 text = "ACCESO REQUERIDO",
