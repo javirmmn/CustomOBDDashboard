@@ -36,13 +36,21 @@
 
         <!-- Vista previa TEMPORAL del salpicadero en el móvil (lanzada desde
              un botón en MainActivity, en todas las compilaciones). No expuesta
-             a otras apps. Quitar cuando exista el diseño definitivo de la UI
-             móvil (Fase 8). -->
+             a otras apps. Quitar cuando exista la app del móvil definitiva
+             (Fase 5 del plan). -->
         <activity
             android:name=".DashboardPreviewActivity"
             android:exported="false"
-            android:label="Vista previa (debug)"
+            android:label="Vista previa"
             android:screenOrientation="landscape"
+            android:theme="@style/Theme.IbizaCustomMap" />
+
+        <!-- Diagnóstico OBD bajo demanda (todas las compilaciones). No expuesta
+             a otras apps: solo se lanza desde MainActivity. -->
+        <activity
+            android:name=".DiagnosticsActivity"
+            android:exported="false"
+            android:label="Diagnóstico OBD"
             android:theme="@style/Theme.IbizaCustomMap" />
 
         <meta-data

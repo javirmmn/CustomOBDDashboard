@@ -311,6 +311,9 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
 
     init {
+        // Solo informativo: el diagnóstico del móvil lo usa para explicar por
+        // qué el adaptador puede estar ocupado. No cambia la conexión.
+        ObdLinkState.dashboardActive = true
         startObdPolling()
         gForceSensor.start()
 
@@ -335,6 +338,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                     obdManager?.closeConnection()
                     renderHandler.removeCallbacksAndMessages(null)
                     renderThread.quitSafely()
+                    ObdLinkState.dashboardActive = false
                 }
             },
         )

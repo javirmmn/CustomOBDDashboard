@@ -10,7 +10,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 
-class ObdManager(private val context: Context) {
+class ObdManager(private val context: Context) : ElmIo {
 
     companion object {
         private const val TAG = "ObdManager"
@@ -24,7 +24,7 @@ class ObdManager(private val context: Context) {
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
 
-    var isConnected = false
+    override var isConnected = false
         private set
 
     init {
@@ -81,7 +81,7 @@ class ObdManager(private val context: Context) {
         }
     }
 
-    fun sendCommand(command: String) {
+    override fun sendCommand(command: String) {
         if (!isConnected || outputStream == null) return
         try {
             Log.d(TAG, "TX (Enviando): $command")
@@ -94,7 +94,8 @@ class ObdManager(private val context: Context) {
         }
     }
 
-    fun readResponse(timeoutMs: Long = DEFAULT_TIMEOUT_MS): String {
+    // El valor por defecto (DEFAULT_TIMEOUT_MS) se hereda de ElmIo.
+    override fun readResponse(timeoutMs: Long): String {
         if (!isConnected || inputStream == null) return ""
         try {
             val buffer = ByteArray(1024)

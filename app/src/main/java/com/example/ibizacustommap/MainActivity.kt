@@ -122,7 +122,7 @@ fun MainAppScreen(permissionsGranted: Boolean, onRequestPermissions: () -> Unit)
             // Vista previa TEMPORAL del salpicadero (modo simulación) directamente
             // en el móvil, sin depender de Android Auto ni del Desktop Head Unit.
             // Disponible en todas las compilaciones (release incluida); se
-            // quitará al diseñar la UI móvil definitiva (Fase 8 del plan).
+            // quitará al diseñar la app del móvil definitiva (Fase 5 del plan).
             Spacer(modifier = Modifier.height(40.dp))
             val context = LocalContext.current
             OutlinedButton(
@@ -132,6 +132,22 @@ fun MainAppScreen(permissionsGranted: Boolean, onRequestPermissions: () -> Unit)
             ) {
                 Text(
                     text = "VISTA PREVIA DEL SALPICADERO",
+                    color = mutedText,
+                    fontSize = 12.sp,
+                    letterSpacing = 1.sp,
+                )
+            }
+
+            // Diagnóstico OBD bajo demanda (Paso previo del plan): mide el
+            // adaptador y la ECU y deja un informe para compartir.
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(Intent(context, DiagnosticsActivity::class.java))
+                },
+            ) {
+                Text(
+                    text = "DIAGNÓSTICO OBD",
                     color = mutedText,
                     fontSize = 12.sp,
                     letterSpacing = 1.sp,
