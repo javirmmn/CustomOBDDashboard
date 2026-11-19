@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.util.Log
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
@@ -24,6 +25,7 @@ class ObdManager(private val context: Context) : ElmIo {
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
 
+    @Volatile
     override var isConnected = false
         private set
 
@@ -81,22 +83,30 @@ class ObdManager(private val context: Context) : ElmIo {
         }
     }
 
+    override fun close() = closeConnection()
+
+    // Los errores de transporte se propagan como ElmLinkException (antes se
+    // tragaban y el bucle seguía girando sin conexión, con el dashboard
+    // congelado). La interrupción del hilo se propaga tal cual.
     override fun sendCommand(command: String) {
-        if (!isConnected || outputStream == null) return
+        val out = outputStream
+        if (!isConnected || out == null) throw ElmLinkException("sin conexión con el adaptador")
         try {
             Log.d(TAG, "TX (Enviando): $command")
             val cmdWithReturn = "$command\r"
-            outputStream?.write(cmdWithReturn.toByteArray())
-            outputStream?.flush()
-        } catch (e: Exception) {
+            out.write(cmdWithReturn.toByteArray())
+            out.flush()
+        } catch (e: IOException) {
             Log.e(TAG, "Error enviando comando: ${e.message}")
             closeConnection()
+            throw ElmLinkException("fallo al enviar '$command'", e)
         }
     }
 
     // El valor por defecto (DEFAULT_TIMEOUT_MS) se hereda de ElmIo.
     override fun readResponse(timeoutMs: Long): String {
-        if (!isConnected || inputStream == null) return ""
+        val input = inputStream
+        if (!isConnected || input == null) throw ElmLinkException("sin conexión con el adaptador")
         try {
             val buffer = ByteArray(1024)
             val responseBuilder = java.lang.StringBuilder()
@@ -104,9 +114,9 @@ class ObdManager(private val context: Context) : ElmIo {
             val startTime = System.currentTimeMillis()
 
             while (System.currentTimeMillis() - startTime < timeoutMs) {
-                if (inputStream!!.available() > 0) {
-                    val bytesRead = inputStream!!.read(buffer)
-                    if (bytesRead == -1) break
+                if (input.available() > 0) {
+                    val bytesRead = input.read(buffer)
+                    if (bytesRead == -1) throw IOException("el adaptador cerró la conexión")
 
                     val chunk = String(buffer, 0, bytesRead)
                     responseBuilder.append(chunk)
@@ -143,10 +153,10 @@ class ObdManager(private val context: Context) : ElmIo {
 
             return cleanResponse
 
-        } catch (e: Exception) {
+        } catch (e: IOException) {
             Log.e(TAG, "Error leyendo: ${e.message}")
             closeConnection()
-            return "ERROR"
+            throw ElmLinkException("fallo al leer", e)
         }
     }
 }

@@ -8,8 +8,8 @@ class DashboardSimulatorTest {
 
     @Test
     fun siempreMarcaModoSimulacion() {
-        assertEquals(true, DashboardSimulator.at(0f).modoSimulacion)
-        assertEquals(true, DashboardSimulator.at(37.2f).modoSimulacion)
+        assertEquals(LinkState.SIMULATION, DashboardSimulator.at(0f).link)
+        assertEquals(LinkState.SIMULATION, DashboardSimulator.at(37.2f).link)
     }
 
     @Test

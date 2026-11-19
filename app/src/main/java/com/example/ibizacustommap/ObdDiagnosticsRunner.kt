@@ -4,18 +4,8 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
-
-/** Estado compartido en el proceso sobre quién puede estar usando el adaptador. */
-object ObdLinkState {
-    /**
-     * true mientras el salpicadero de Android Auto (MainScreen) está vivo. En
-     * ese caso su hilo OBD probablemente tiene el adaptador, que solo admite
-     * una conexión Bluetooth a la vez. Solo se usa para dar un mensaje claro.
-     */
-    @Volatile
-    var dashboardActive: Boolean = false
-}
 
 /**
  * Lanza [ObdDiagnostics] bajo demanda desde la app del móvil (también en
@@ -32,23 +22,23 @@ class ObdDiagnosticsRunner(context: Context) {
     }
 
     private val appContext = context.applicationContext
-
-    @Volatile
-    private var obd: ObdManager? = null
+    private val connector = BluetoothElmConnector(appContext)
 
     fun run(onStatus: (String) -> Unit, onLine: (String) -> Unit): Outcome {
         if (!running.compareAndSet(false, true)) return Outcome.Failed("Ya hay un diagnóstico en marcha.")
-        val manager = ObdManager(appContext)
-        obd = manager
+        var link: ElmIo? = null
         try {
             onStatus("Conectando con el adaptador…")
-            val connected = try {
-                manager.connect()
-            } catch (e: SecurityException) {
-                return Outcome.Failed("Falta el permiso de Bluetooth. Concédelo en la pantalla principal de la app.")
-            }
+            val result = connector.connect()
             if (Thread.currentThread().isInterrupted) return Outcome.Failed(CANCELLED)
-            if (!connected) return Outcome.Failed(noConnectionMessage())
+            val manager = when (result) {
+                is ConnectResult.Connected -> result.link
+                ConnectResult.NoPermission ->
+                    return Outcome.Failed("Falta el permiso de Bluetooth. Concédelo en la pantalla principal de la app.")
+                ConnectResult.BluetoothOff -> return Outcome.Failed("El Bluetooth del móvil está apagado.")
+                ConnectResult.Failed -> return Outcome.Failed(noConnectionMessage())
+            }
+            link = manager
 
             onStatus("Inicializando el ELM327…")
             val init = initElm(manager)
@@ -69,11 +59,13 @@ class ObdDiagnosticsRunner(context: Context) {
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             return Outcome.Failed(CANCELLED)
+        } catch (e: IOException) {
+            return Outcome.Failed("Se perdió la conexión con el adaptador: ${e.message}")
         } catch (e: Exception) {
             return Outcome.Failed("Error inesperado: ${e.javaClass.simpleName}: ${e.message}")
         } finally {
-            manager.closeConnection()
-            obd = null
+            link?.close()
+            connector.abort()
             running.set(false)
         }
     }
@@ -83,7 +75,7 @@ class ObdDiagnosticsRunner(context: Context) {
      * connect() o una lectura en curso. Se puede llamar desde cualquier hilo.
      */
     fun cancel() {
-        obd?.closeConnection()
+        connector.abort()
     }
 
     private fun preamble(): List<String> = listOf(
@@ -92,11 +84,10 @@ class ObdDiagnosticsRunner(context: Context) {
     )
 
     /**
-     * COPIA intencionada de la inicialización de MainScreen (mismos comandos y
+     * COPIA intencionada de la inicialización de ObdPoller (mismos comandos y
      * esperas), para que el diagnóstico mida el adaptador en el mismo estado
-     * que el salpicadero sin tocar el código de conexión que ya funciona en el
-     * coche. Se unificarán en la Fase 0/3 del plan. ATDPN no va aquí: el
-     * diagnóstico lo pide después de 0100, cuando ya hay protocolo.
+     * que el salpicadero. Se unificarán en la Fase 3 del plan. ATDPN no va
+     * aquí: el diagnóstico lo pide después de 0100, cuando ya hay protocolo.
      */
     private fun initElm(obd: ElmIo): List<String> {
         val out = mutableListOf("-- Inicialización (misma secuencia que el salpicadero) --")
@@ -111,7 +102,8 @@ class ObdDiagnosticsRunner(context: Context) {
 
     private fun noConnectionMessage(): String = buildString {
         append("No se pudo conectar con el adaptador OBD.")
-        if (ObdLinkState.dashboardActive) {
+        val dashboard = ObdLinkState.link.value
+        if (dashboard != null && dashboard != LinkState.SIMULATION) {
             append(
                 "\n\nEl salpicadero está abierto en Android Auto y seguramente tiene el adaptador " +
                     "ocupado (solo admite una conexión). Desconecta Android Auto o cierra la app " +

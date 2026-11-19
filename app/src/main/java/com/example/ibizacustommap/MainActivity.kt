@@ -101,16 +101,21 @@ fun MainAppScreen(permissionsGranted: Boolean, onRequestPermissions: () -> Unit)
             // colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color.White)
         )
 
-        Spacer(modifier = Modifier.height(80.dp))
+        Spacer(modifier = Modifier.height(48.dp))
 
         // LÓGICA DE LA INTERFAZ
         if (permissionsGranted) {
+            val context = LocalContext.current
+
+            // Estado real del salpicadero de Android Auto (el mismo que se ve en el coche).
+            val link by ObdLinkState.link.collectAsState()
             Text(
-                text = "ESPERANDO CONEXIÓN OBD2...",
+                text = "SALPICADERO: " + (link?.label ?: "CERRADO"),
                 color = textColor,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 2.sp
+                letterSpacing = 2.sp,
+                textAlign = TextAlign.Center,
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
@@ -119,12 +124,36 @@ fun MainAppScreen(permissionsGranted: Boolean, onRequestPermissions: () -> Unit)
                 fontSize = 12.sp
             )
 
+            // Simulación en la pantalla del coche: solo si se elige aquí. Sin
+            // escáner la app ya no entra sola en simulación.
+            Spacer(modifier = Modifier.height(24.dp))
+            var simulation by remember { mutableStateOf(AppSettings.isSimulation(context)) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "SIMULACIÓN EN EL COCHE",
+                    color = if (simulation) textColor else mutedText,
+                    fontSize = 12.sp,
+                    letterSpacing = 1.sp,
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Switch(
+                    checked = simulation,
+                    onCheckedChange = {
+                        simulation = it
+                        AppSettings.setSimulation(context, it)
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Color(0xFFFF7800),
+                        checkedThumbColor = Color.Black,
+                    ),
+                )
+            }
+
             // Vista previa TEMPORAL del salpicadero (modo simulación) directamente
             // en el móvil, sin depender de Android Auto ni del Desktop Head Unit.
             // Disponible en todas las compilaciones (release incluida); se
             // quitará al diseñar la app del móvil definitiva (Fase 5 del plan).
-            Spacer(modifier = Modifier.height(40.dp))
-            val context = LocalContext.current
+            Spacer(modifier = Modifier.height(24.dp))
             OutlinedButton(
                 onClick = {
                     context.startActivity(Intent(context, DashboardPreviewActivity::class.java))

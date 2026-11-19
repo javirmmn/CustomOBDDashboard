@@ -33,8 +33,8 @@ import kotlinx.coroutines.delay
  * esta pantalla no toca el Bluetooth ni el ObdManager.
  *
  * Se lanza desde un botón en MainActivity, visible en todas las compilaciones
- * (incluida release/Play Store). Pendiente de sustituir por el diseño
- * definitivo de la UI móvil (Fase 8 del plan).
+ * (incluida release/Play Store). Pendiente de sustituir por la app del
+ * móvil definitiva (Fase 5 del plan).
  */
 class DashboardPreviewActivity : ComponentActivity() {
 

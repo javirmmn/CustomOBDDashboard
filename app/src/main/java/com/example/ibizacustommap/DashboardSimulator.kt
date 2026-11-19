@@ -4,14 +4,10 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Genera los mismos datos que el modo simulación de MainScreen (ondas
- * senoidales), pero como función pura de un "tick", para poder previsualizar
- * el salpicadero fuera de Android Auto (DashboardPreviewActivity, solo debug).
- *
- * Es una COPIA intencionada de esas fórmulas, no una extracción de MainScreen:
- * así un cambio aquí nunca puede afectar al camino real de conexión OBD que ya
- * funciona en el coche. Si algún día se quiere una única fuente de verdad,
- * MainScreen podría pasar a usar este mismo objeto (Fase 2 del plan).
+ * Datos simulados (ondas senoidales) como función pura de un "tick". Es la
+ * ÚNICA fuente de simulación: la usan la vista previa del móvil
+ * (DashboardPreviewActivity) y la pantalla del coche (MainScreen) cuando se
+ * activa la simulación desde la app del móvil. Nunca se activa sola.
  */
 object DashboardSimulator {
 
@@ -47,7 +43,7 @@ object DashboardSimulator {
             debugMafRaw = "-",
             debugAfrRaw = "-",
             debugGearRatio = Float.NaN,
-            modoSimulacion = true,
+            link = LinkState.SIMULATION,
         )
     }
 }

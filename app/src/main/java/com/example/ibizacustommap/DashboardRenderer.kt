@@ -7,9 +7,10 @@ import android.graphics.RectF
 import android.graphics.Typeface
 
 /**
- * Snapshot inmutable de telemetría lista para dibujar. Se construye una vez
- * (dentro de un lock, o de golpe en la simulación) y se pinta sin volver a
- * tocar variables mutables compartidas con otro hilo.
+ * Snapshot inmutable de telemetría lista para dibujar. Lo publica ObdPoller
+ * (o DashboardSimulator) de golpe y se pinta sin volver a tocar variables
+ * mutables compartidas con otro hilo. [link] es el estado de la fuente de
+ * datos, que se pinta en la pantalla del coche.
  */
 data class TelemetrySnapshot(
     val speedKmh: Float,
@@ -28,8 +29,31 @@ data class TelemetrySnapshot(
     val debugMafRaw: String,
     val debugAfrRaw: String,
     val debugGearRatio: Float,
-    val modoSimulacion: Boolean,
-)
+    val link: LinkState,
+) {
+    companion object {
+        /** Sin ningún dato: todo "--", marcha "--" y LEDs apagados. */
+        fun empty(link: LinkState) = TelemetrySnapshot(
+            speedKmh = Float.NaN,
+            gearDisplay = "--",
+            activeLeds = 0,
+            oilTemp = Float.NaN,
+            oilTempFromCoolant = false,
+            turboPressure = Float.NaN,
+            intakeTemp = Float.NaN,
+            throttlePercent = Float.NaN,
+            afr = Float.NaN,
+            engineLoad = Float.NaN,
+            gForce = Float.NaN,
+            maf = Float.NaN,
+            debugRawResponse = "-",
+            debugMafRaw = "-",
+            debugAfrRaw = "-",
+            debugGearRatio = Float.NaN,
+            link = link,
+        )
+    }
+}
 
 private data class TelemetryItem(val label: String, val value: String, val unit: String, val dynamicColor: Int)
 
@@ -39,7 +63,7 @@ private data class TelemetryItem(val label: String, val value: String, val unit:
  * [TelemetrySnapshot] ya calculado y lo pinta.
  *
  * Lo usan tanto MainScreen (pantalla real en Android Auto) como
- * DashboardPreviewActivity (vista previa temporal en el móvil, solo debug).
+ * DashboardPreviewActivity (vista previa temporal en el móvil).
  * Al compartir el mismo código, ambas pantallas muestran EXACTAMENTE lo mismo.
  */
 object DashboardRenderer {
@@ -167,6 +191,8 @@ object DashboardRenderer {
         drawTextCentered(canvas, speedText, (cxL + cxR) / 2f, speedY, speedPaint)
 
         val gearY = speedDividerY + ((centerEndY - speedDividerY) * 0.60f)
+        // Sin datos la marcha es "--" en gris, no "N".
+        if (s.gearDisplay == "--") gearPaint.color = TEXT_GRAY
         drawTextCentered(canvas, s.gearDisplay, (cxL + cxR) / 2f, gearY, gearPaint)
 
         fun drawDataRow(slotRect: RectF, item: TelemetryItem) {
@@ -300,7 +326,7 @@ object DashboardRenderer {
                 textAlign = Paint.Align.LEFT
             }
 
-            val displayText = if (s.modoSimulacion) {
+            val displayText = if (s.link == LinkState.SIMULATION) {
                 "SIM_OK"
             } else {
                 val ratioText = if (s.debugGearRatio.isNaN()) "-" else String.format("%.1f", s.debugGearRatio)
@@ -309,6 +335,49 @@ object DashboardRenderer {
 
             canvas.drawText(displayText, width * 0.02f, height * 0.045f, debugPaint)
         }
+
+        // Estado de la conexión, en todas las compilaciones (release incluida),
+        // en el hueco entre los LEDs y los recuadros de datos.
+        drawLinkBanner(canvas, width, height, s.link, (rpmBottom + startY) / 2f)
+    }
+
+    private val LIVE_GREEN = Color.rgb(70, 190, 90)
+
+    private fun drawLinkBanner(canvas: Canvas, width: Int, height: Int, link: LinkState, cy: Float) {
+        // EN VIVO: discreto. El resto: franja visible, roja si requiere acción.
+        val (bg, fg) = when (link) {
+            LinkState.LIVE -> Color.TRANSPARENT to LIVE_GREEN
+            LinkState.SIMULATION -> ACCENT_ORANGE to Color.BLACK
+            LinkState.SEARCHING, LinkState.CONNECTING -> Color.TRANSPARENT to TEXT_WHITE
+            LinkState.RECONNECTING, LinkState.NO_ECU_DATA -> Color.TRANSPARENT to ACCENT_ORANGE
+            LinkState.NO_CONNECTION, LinkState.BLUETOOTH_OFF, LinkState.NO_PERMISSION -> ALERT_RED to Color.WHITE
+        }
+        val text = if (link == LinkState.LIVE) "● ${link.label}" else link.label
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = fg
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+            letterSpacing = 0.12f
+            textSize = height * if (link == LinkState.LIVE) 0.026f else 0.034f
+        }
+        // Que quepa siempre (pantallas estrechas).
+        val maxWidth = width * 0.84f
+        val measured = paint.measureText(text)
+        if (measured > maxWidth) paint.textSize *= maxWidth / measured
+
+        val cx = width / 2f
+        if (bg != Color.TRANSPARENT) {
+            val padX = height * 0.03f
+            val padY = height * 0.012f
+            val half = paint.measureText(text) / 2f
+            val fm = paint.fontMetrics
+            val textH = fm.descent - fm.ascent
+            val rect = RectF(cx - half - padX, cy - textH / 2f - padY, cx + half + padX, cy + textH / 2f + padY)
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bg }
+            canvas.drawRoundRect(rect, rect.height() / 2f, rect.height() / 2f, bgPaint)
+        }
+        drawTextCentered(canvas, text, cx, cy, paint)
     }
 
     private fun drawTextCentered(

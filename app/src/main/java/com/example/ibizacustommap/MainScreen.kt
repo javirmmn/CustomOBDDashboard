@@ -1,5 +1,6 @@
 package com.example.ibizacustommap
 
+import android.content.SharedPreferences
 import android.graphics.Canvas
 import android.graphics.Rect
 import android.os.Handler
@@ -19,282 +20,65 @@ import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 
+/**
+ * Pantalla del salpicadero en Android Auto. Solo gestiona el ciclo de vida,
+ * la superficie y la fuente de datos:
+ * - Escáner real: [ObdPoller] (conexión, polling, reconexión y estados).
+ * - Simulación: [DashboardSimulator], SOLO si se activa en la app del móvil
+ *   (AppSettings). Nunca se activa sola; se ve con la franja "SIMULACIÓN".
+ */
 class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
-
-    private var modoSimulacion = false
-    private var obdManager: ObdManager? = null
-    private var obdThread: Thread? = null
 
     @Volatile
     private var surfaceContainer: SurfaceContainer? = null
 
-    // NaN = todavía no ha llegado ninguna lectura válida de la ECU → se pinta "--".
-    // (Antes arrancaban con valores inventados, p. ej. MAF=10, que se quedaban
-    // fijos para siempre si el PID no estaba soportado.)
-    private var speedKmh: Float = Float.NaN
-    private var gearDisplay: String = "N"
-    private var activeLeds: Int = 0
-
-    private var oilTemp: Float = Float.NaN
-    private var oilTempFromCoolant: Boolean = false // true si el valor viene del PID 05 (refrigerante)
-    private var turboPressure: Float = Float.NaN
-    private var intakeTemp: Float = Float.NaN
-    private var throttlePercent: Float = Float.NaN
-
-    private var afr: Float = Float.NaN
-    private var engineLoad: Float = Float.NaN
-    private var gForce: Float = 0f // solo simulación; en real sale de gForceSensor
-    private var maf: Float = Float.NaN
-
-    private val gearEstimator = GearEstimator()
     private val gForceSensor = GForceSensor(carContext)
 
-    // VARIABLES CHIVATO DEBUG
-    private var debugRawResponse: String = "ESPERANDO..."
-    private var debugMafRaw: String = "-"
-    private var debugAfrRaw: String = "-"
-    private var debugGearRatio: Float = Float.NaN
+    // Fuente de datos. Se cambian solo desde el hilo principal; el hilo de
+    // render solo las lee (de ahí @Volatile).
+    @Volatile
+    private var simulation = false
 
-    private val telemetryLock = Any()
-    private var simulationTick = 0f
+    @Volatile
+    private var poller: ObdPoller? = null
+
+    private var simulationTick = 0f // solo hilo de render
+
+    private val prefs = AppSettings.prefs(carContext)
+
+    // Se guarda en un campo: SharedPreferences solo guarda referencias débiles.
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == AppSettings.KEY_SIMULATION) applySource(AppSettings.isSimulation(getCarContext()))
+    }
 
     private val renderThread = HandlerThread(RENDER_THREAD_NAME).apply { start() }
     private val renderHandler = Handler(renderThread.looper)
     private val redrawRunnable = Runnable { performRedrawSurface() }
 
-    // TelemetrySnapshot vive en DashboardRenderer.kt: es el mismo tipo que usa
-    // la vista previa del móvil (DashboardPreviewActivity), para garantizar
-    // que ambas pantallas dibujen exactamente lo mismo.
-
     private val refreshTickerRunnable = object : Runnable {
         override fun run() {
             if (surfaceContainer == null) return
-
-            if (modoSimulacion) {
-                simulationTick += 0.05f
-
-                val waveSlow = ((Math.sin(simulationTick.toDouble() * 0.5) + 1.0) / 2.0).toFloat()
-                val waveFast = ((Math.sin(simulationTick.toDouble() * 1.5) + 1.0) / 2.0).toFloat()
-                val waveAFR = ((Math.cos(simulationTick.toDouble() * 0.7) + 1.0) / 2.0).toFloat()
-
-                synchronized(telemetryLock) {
-                    activeLeds = (waveFast * 24f).toInt()
-                    speedKmh = 60f + (waveSlow * 90f)
-
-                    gearDisplay = when {
-                        speedKmh < 3 -> "N"
-                        speedKmh < 30 -> "1"
-                        speedKmh < 60 -> "2"
-                        speedKmh < 90 -> "3"
-                        speedKmh < 120 -> "4"
-                        else -> "5"
-                    }
-
-                    oilTemp = 60f + (waveSlow * 70f)
-                    turboPressure = -0.2f + (waveFast * 1.8f)
-                    intakeTemp = 25f + (waveSlow * 40f)
-                    throttlePercent = waveFast * 100f
-                    afr = 10.0f + (waveAFR * 6.5f)
-                    engineLoad = waveFast * 100f
-                    gForce = waveFast * 1.2f
-                    maf = 10f + (waveFast * 130f)
-                }
-            }
-
+            if (simulation) simulationTick += 0.05f
             scheduleRedraw()
             renderHandler.postDelayed(this, REFRESH_TICK_MS)
         }
     }
 
-    private fun startObdPolling() {
-        obdThread = Thread {
-            if (obdManager == null) {
-                obdManager = ObdManager(carContext)
-            }
-
-            Log.d(TAG, "Iniciando búsqueda de adaptador OBD2...")
-            var attempts = 0
-            var connected = false
-
-            while (!connected && attempts < 5 && !Thread.currentThread().isInterrupted) {
-                connected = obdManager?.connect() == true
-                if (!connected) {
-                    attempts++
-                    Thread.sleep(1000)
-                }
-            }
-
-            modoSimulacion = !connected
-
-            if (modoSimulacion) {
-                Log.d(TAG, "Activando MODO SIMULACIÓN automático.")
-            } else {
-                Log.d(TAG, "¡OBD2 Conectado! Ejecutando rutina de inicialización estricta.")
-                try {
-                    obdManager?.sendCommand("ATZ")
-                    Thread.sleep(800)
-                    obdManager?.readResponse()
-
-                    obdManager?.sendCommand("ATE0")
-                    Thread.sleep(300)
-                    obdManager?.readResponse()
-
-                    obdManager?.sendCommand("ATH0")
-                    Thread.sleep(300)
-                    obdManager?.readResponse()
-
-                    obdManager?.sendCommand("ATS0")
-                    Thread.sleep(300)
-                    obdManager?.readResponse()
-
-                    obdManager?.sendCommand("ATSP0")
-                    Thread.sleep(500)
-                    obdManager?.readResponse()
-
-                    // Sin ATSH7E0: dejamos que ATSP0 autodetecte protocolo
-                    // contra la dirección funcional por defecto.
-
-                    obdManager?.sendCommand("ATDPN")
-                    Thread.sleep(300)
-                    val protocoloDetectado = obdManager?.readResponse() ?: "?"
-                    Log.d(TAG, "Protocolo autodetectado (ATDPN): $protocoloDetectado")
-
-                    Log.d(TAG, "Inicialización completada. Empezando a pedir datos...")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error iniciando el chip ELM327: ${e.message}")
-                    modoSimulacion = true
-                }
-            }
-
-            var loopCounter = 0
-
-            while (!Thread.currentThread().isInterrupted) {
-                if (modoSimulacion) {
-                    Thread.sleep(1000)
-                    continue
-                }
-
-                try {
-                    // --- CARRIL RÁPIDO ---
-
-                    obdManager?.sendCommand("01 0C")
-                    val rawRpm = obdManager?.readResponse() ?: "VACIO"
-                    val rpmCalc = ObdDecoder.parseRPM(rawRpm)
-
-                    synchronized(telemetryLock) {
-                        debugRawResponse = rawRpm
-                    }
-                    Thread.sleep(40)
-
-                    obdManager?.sendCommand("01 0D")
-                    val speedCalc = ObdDecoder.parseSpeed(obdManager?.readResponse() ?: "").toFloat()
-                    Thread.sleep(40)
-
-                    obdManager?.sendCommand("01 0B")
-                    val boostCalc = ObdDecoder.parseBoost(obdManager?.readResponse() ?: "").toFloat()
-                    Thread.sleep(40)
-
-                    val currentGear = gearEstimator.update(rpmCalc, speedCalc)
-                    val gearRatio = if (rpmCalc >= 0 && speedCalc >= 3f) rpmCalc / speedCalc else Float.NaN
-
-                    // --- CARRIL LENTO ---
-                    var newOil = oilTemp
-                    var newOilFromCoolant = oilTempFromCoolant
-                    var newIntake = intakeTemp
-                    var newLoad = engineLoad
-                    var newMaf = maf
-                    var newAfr = afr
-                    var newThrottle = throttlePercent
-
-                    if (loopCounter % 10 == 0) {
-                        obdManager?.sendCommand("01 11")
-                        val throttleCalc = ObdDecoder.parsePercentage(obdManager?.readResponse() ?: "", "11").toFloat()
-                        if (throttleCalc >= 0f) newThrottle = throttleCalc
-                        Thread.sleep(40)
-
-                        obdManager?.sendCommand("01 5C")
-                        var tRaw = obdManager?.readResponse() ?: ""
-                        var tCalc = ObdDecoder.parseTemp(tRaw, "5C").toFloat()
-                        var tFromCoolant = false
-                        if (tCalc <= -100f) {
-                            obdManager?.sendCommand("01 05")
-                            tRaw = obdManager?.readResponse() ?: ""
-                            tCalc = ObdDecoder.parseTemp(tRaw, "05").toFloat()
-                            tFromCoolant = true
-                        }
-                        if (tCalc > -100f) {
-                            newOil = tCalc
-                            newOilFromCoolant = tFromCoolant
-                        }
-                        Thread.sleep(40)
-
-                        obdManager?.sendCommand("01 0F")
-                        val intakeC = ObdDecoder.parseTemp(obdManager?.readResponse() ?: "", "0F").toFloat()
-                        if (intakeC > -100f) newIntake = intakeC
-                        Thread.sleep(40)
-
-                        obdManager?.sendCommand("01 04")
-                        val loadC = ObdDecoder.parsePercentage(obdManager?.readResponse() ?: "", "04").toFloat()
-                        if (loadC >= 0f) newLoad = loadC
-                        Thread.sleep(40)
-
-                        // MAF: timeout corto (FAST_TIMEOUT_MS). Si tu ECU no lo
-                        // soporta, no queremos que arrastre 1.5s el bucle entero.
-                        obdManager?.sendCommand("01 10")
-                        val rawMaf = obdManager?.readResponse(ObdManager.FAST_TIMEOUT_MS) ?: "VACIO"
-                        val mafC = ObdDecoder.parseMAF(rawMaf).toFloat()
-                        synchronized(telemetryLock) { debugMafRaw = rawMaf }
-                        if (mafC >= 0f) newMaf = mafC
-                        Thread.sleep(40)
-
-                        // AFR: primero PID 34 (sonda lambda B1S1 = mezcla MEDIDA).
-                        // Si no responde, fallback a PID 44 (mezcla que PIDE la ECU:
-                        // es un objetivo, a crucero vale siempre 14.7).
-                        obdManager?.sendCommand("01 34")
-                        var rawAfr = obdManager?.readResponse(ObdManager.FAST_TIMEOUT_MS) ?: "VACIO"
-                        var afrC = ObdDecoder.parseAFR(rawAfr, "34")
-                        if (afrC <= 0.0) {
-                            Thread.sleep(40)
-                            obdManager?.sendCommand("01 44")
-                            rawAfr = obdManager?.readResponse(ObdManager.FAST_TIMEOUT_MS) ?: "VACIO"
-                            afrC = ObdDecoder.parseAFR(rawAfr, "44")
-                        }
-                        synchronized(telemetryLock) { debugAfrRaw = rawAfr }
-                        if (afrC > 0.0) newAfr = afrC.toFloat()
-                        Thread.sleep(40)
-                    }
-
-                    synchronized(telemetryLock) {
-                        if (rpmCalc >= 0) activeLeds = (rpmCalc / DashboardRenderer.RPM_PER_LED).coerceIn(0, 24)
-                        if (speedCalc >= 0f) speedKmh = speedCalc
-                        if (boostCalc > -100f) turboPressure = boostCalc
-                        gearDisplay = currentGear
-                        debugGearRatio = gearRatio
-
-                        if (loopCounter % 10 == 0) {
-                            throttlePercent = newThrottle
-                            oilTemp = newOil
-                            oilTempFromCoolant = newOilFromCoolant
-                            intakeTemp = newIntake
-                            engineLoad = newLoad
-                            maf = newMaf
-                            afr = newAfr
-                        }
-                    }
-
-                    loopCounter++
-                    if (loopCounter > 1000) loopCounter = 0
-
-                    Thread.sleep(50)
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Conexión OBD2 perdida en marcha: ${e.message}")
-                    obdManager?.closeConnection()
-                    modoSimulacion = true
-                }
-            }
+    /** Cambia entre escáner real y simulación. Hilo principal. */
+    private fun applySource(sim: Boolean) {
+        simulation = sim
+        if (sim) {
+            // Libera el adaptador: la simulación no lo necesita.
+            poller?.stop()
+            poller = null
+            ObdLinkState.link.value = LinkState.SIMULATION
+        } else if (poller == null) {
+            poller = ObdPoller(
+                connector = BluetoothElmConnector(carContext),
+                onState = { ObdLinkState.link.value = it },
+            ).also { it.start() }
         }
-        obdThread?.start()
+        scheduleRedraw()
     }
 
     private var redrawInProgress = false
@@ -311,10 +95,8 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
 
     init {
-        // Solo informativo: el diagnóstico del móvil lo usa para explicar por
-        // qué el adaptador puede estar ocupado. No cambia la conexión.
-        ObdLinkState.dashboardActive = true
-        startObdPolling()
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        applySource(AppSettings.isSimulation(carContext))
         gForceSensor.start()
 
         carContext
@@ -333,12 +115,14 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                         getCarContext().getCarService(NavigationManager::class.java).clearNavigationManagerCallback()
                     } catch (_: Exception) {}
 
+                    prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
                     gForceSensor.stop()
-                    obdThread?.interrupt()
-                    obdManager?.closeConnection()
+                    // Interrumpe el hilo OBD y cierra el socket; el hilo termina solo.
+                    poller?.stop()
+                    poller = null
                     renderHandler.removeCallbacksAndMessages(null)
                     renderThread.quitSafely()
-                    ObdLinkState.dashboardActive = false
+                    ObdLinkState.link.value = null
                 }
             },
         )
@@ -404,6 +188,15 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
 
     private val renderStateLock = Any()
 
+    /** Lo que hay que pintar ahora. Hilo de render. */
+    private fun currentSnapshot(): TelemetrySnapshot =
+        if (simulation) {
+            DashboardSimulator.at(simulationTick)
+        } else {
+            (poller?.snapshot ?: TelemetrySnapshot.empty(LinkState.SEARCHING))
+                .copy(gForce = gForceSensor.currentG)
+        }
+
     private fun performRedrawSurface() {
         synchronized(renderStateLock) {
             if (redrawInProgress) {
@@ -433,28 +226,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             return
         }
 
-        val snapshot: TelemetrySnapshot
-        synchronized(telemetryLock) {
-            snapshot = TelemetrySnapshot(
-                speedKmh = speedKmh,
-                gearDisplay = gearDisplay,
-                activeLeds = activeLeds,
-                oilTemp = oilTemp,
-                oilTempFromCoolant = oilTempFromCoolant,
-                turboPressure = turboPressure,
-                intakeTemp = intakeTemp,
-                throttlePercent = throttlePercent,
-                afr = afr,
-                engineLoad = engineLoad,
-                gForce = if (modoSimulacion) gForce else gForceSensor.currentG,
-                maf = maf,
-                debugRawResponse = debugRawResponse,
-                debugMafRaw = debugMafRaw,
-                debugAfrRaw = debugAfrRaw,
-                debugGearRatio = debugGearRatio,
-                modoSimulacion = modoSimulacion,
-            )
-        }
+        val snapshot = currentSnapshot()
 
         val canvas: Canvas? =
             try {
@@ -496,10 +268,6 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             renderHandler.post(redrawRunnable)
         }
     }
-
-    // El dibujo del salpicadero vive en DashboardRenderer.kt (compartido con
-    // DashboardPreviewActivity). Aquí solo se llama a DashboardRenderer.draw(...)
-    // desde performRedrawSurface().
 
     private companion object {
         private const val TAG = "MainScreen"
