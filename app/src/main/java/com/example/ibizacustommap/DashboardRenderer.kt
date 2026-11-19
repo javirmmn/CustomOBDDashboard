@@ -20,14 +20,16 @@ data class TelemetrySnapshot(
     val oilTempFromCoolant: Boolean,
     val turboPressure: Float,
     val intakeTemp: Float,
+    /** Pedal del acelerador escalado 0-100 % si [throttleIsPedal]; si no, mariposa (PID 11). */
     val throttlePercent: Float,
-    val afr: Float,
+    val throttleIsPedal: Boolean,
+    /** Lambda que pide la ECU (PID 44). La ECU de este coche no da la medida (PID 34). */
+    val lambda: Float,
     val engineLoad: Float,
     val gForce: Float,
-    val maf: Float,
+    /** Avance de encendido en grados antes del PMS (PID 0E). */
+    val ignitionTiming: Float,
     val debugRawResponse: String,
-    val debugMafRaw: String,
-    val debugAfrRaw: String,
     val debugGearRatio: Float,
     val link: LinkState,
 ) {
@@ -42,13 +44,12 @@ data class TelemetrySnapshot(
             turboPressure = Float.NaN,
             intakeTemp = Float.NaN,
             throttlePercent = Float.NaN,
-            afr = Float.NaN,
+            throttleIsPedal = true,
+            lambda = Float.NaN,
             engineLoad = Float.NaN,
             gForce = Float.NaN,
-            maf = Float.NaN,
+            ignitionTiming = Float.NaN,
             debugRawResponse = "-",
-            debugMafRaw = "-",
-            debugAfrRaw = "-",
             debugGearRatio = Float.NaN,
             link = link,
         )
@@ -72,7 +73,7 @@ object DashboardRenderer {
     // Naranja desde 4500 rpm, rojo desde 5500 (fin de la zona de potencia máxima).
     const val RPM_PER_LED = 250
 
-    private const val AFR_FUEL_CUT = 22.05f // lambda 1.5
+    private const val LAMBDA_FUEL_CUT = 1.5f
 
     private val BG_BLACK = Color.argb(255, 4, 4, 4)
     private val SOFT_RED = Color.argb(255, 90, 0, 0)
@@ -240,21 +241,11 @@ object DashboardRenderer {
 
         val throttleColor = if (s.throttlePercent >= 95f) ACCENT_ORANGE else TEXT_WHITE
 
-        val afrColor = when {
-            s.afr >= 16.0f -> ALERT_RED
-            s.afr >= 15.2f -> ACCENT_ORANGE
-            s.afr > 11.5f -> TEXT_WHITE
-            s.afr > 10.5f -> ACCENT_ORANGE
-            else -> ALERT_RED
-        }
-
         // En un turbo la carga calculada llega al 100 % en cada aceleración a fondo:
         // es normal, no una alarma. Naranja solo como indicador de plena carga.
         val loadColor = if (s.engineLoad >= 95f) ACCENT_ORANGE else TEXT_WHITE
 
         val gForceColor = if (s.gForce >= 1.0f) ACCENT_ORANGE else TEXT_WHITE
-
-        val mafColor = TEXT_WHITE
 
         // Sin lectura válida (NaN) → "--" en gris, nunca un número inventado.
         fun item(label: String, v: Float, text: String, unit: String, color: Int) =
@@ -268,7 +259,7 @@ object DashboardRenderer {
             item(oilLabel, s.oilTemp, "${s.oilTemp.toInt()}", "°", oilColor),
             item("BOOST BAR", s.turboPressure, String.format("%.1f", s.turboPressure), "", boostColor),
             item("INTAKE TEMP", s.intakeTemp, "${s.intakeTemp.toInt()}", "°", intakeColor),
-            item("THROTTLE", s.throttlePercent, "${s.throttlePercent.toInt()}", "%", throttleColor)
+            item(if (s.throttleIsPedal) "PEDAL" else "THROTTLE", s.throttlePercent, "${s.throttlePercent.toInt()}", "%", throttleColor)
         )
 
         val rowHeight = (endY - startY) / leftData.size
@@ -284,21 +275,19 @@ object DashboardRenderer {
             }
         }
 
-        // Lambda ≥ 1.5 no se da en combustión de gasolina: es corte de inyección
-        // (al soltar el acelerador) o la sonda saturada. La ECU manda 0xFFFF → 29.4.
-        val afrItem = if (!s.afr.isNaN() && s.afr >= AFR_FUEL_CUT) {
-            TelemetryItem("AFR", "CUT", "", TEXT_GRAY)
+        // Lambda que pide la ECU. ≥ 1.5 no se da en combustión de gasolina: es
+        // corte de inyección (al soltar el acelerador, o motor parado).
+        val lambdaItem = if (!s.lambda.isNaN() && s.lambda >= LAMBDA_FUEL_CUT) {
+            TelemetryItem("LAMBDA OBJ", "CUT", "", TEXT_GRAY)
         } else {
-            item("AFR", s.afr, String.format("%.1f", s.afr), "", afrColor)
+            item("LAMBDA OBJ", s.lambda, String.format("%.2f", s.lambda), "", TEXT_WHITE)
         }
 
-        val mafText = if (s.maf < 100f) String.format("%.1f", s.maf) else "${s.maf.toInt()}"
-
         val rightData = listOf(
-            afrItem,
+            lambdaItem,
             item("ENG LOAD", s.engineLoad, "${s.engineLoad.toInt()}", "%", loadColor),
             item("G-FORCE", s.gForce, String.format("%.1f", s.gForce), "", gForceColor),
-            item("MAF", s.maf, mafText, "G/S", mafColor)
+            item("IGN TIMING", s.ignitionTiming, "${s.ignitionTiming.toInt()}", "°", TEXT_WHITE)
         )
 
         rightData.forEachIndexed { index, item ->
@@ -315,8 +304,7 @@ object DashboardRenderer {
         // =====================================================
         // CHIVATO DEBUG — esquina superior izquierda, pequeño,
         // fuera de zona de datos. Solo visible en builds de debug.
-        // Incluye MAF y AFR crudos para diagnosticar PIDs no soportados,
-        // y R: rpm/velocidad de la marcha actual para calibrar GearEstimator.
+        // R: rpm/velocidad de la marcha actual para calibrar GearEstimator.
         // =====================================================
         if (BuildConfig.DEBUG) {
             val debugPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -330,7 +318,7 @@ object DashboardRenderer {
                 "SIM_OK"
             } else {
                 val ratioText = if (s.debugGearRatio.isNaN()) "-" else String.format("%.1f", s.debugGearRatio)
-                "R:$ratioText RPM:${s.debugRawResponse} MAF:${s.debugMafRaw} AFR:${s.debugAfrRaw}"
+                "R:$ratioText RAW:${s.debugRawResponse}"
             }
 
             canvas.drawText(displayText, width * 0.02f, height * 0.045f, debugPaint)

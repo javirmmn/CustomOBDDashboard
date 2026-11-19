@@ -21,7 +21,8 @@ class DashboardSimulatorTest {
             assertTrue("throttlePercent=${s.throttlePercent}", s.throttlePercent in 0f..100f)
             assertTrue("engineLoad=${s.engineLoad}", s.engineLoad in 0f..100f)
             assertTrue("activeLeds=${s.activeLeds}", s.activeLeds in 0..24)
-            assertTrue("afr=${s.afr}", s.afr in 0f..20f)
+            assertTrue("lambda=${s.lambda}", s.lambda in 0.7f..1.2f)
+            assertTrue("ignitionTiming=${s.ignitionTiming}", s.ignitionTiming in -10f..45f)
             assertTrue(listOf("N", "1", "2", "3", "4", "5").contains(s.gearDisplay))
         }
     }
@@ -34,9 +35,9 @@ class DashboardSimulatorTest {
         assertTrue(!s.turboPressure.isNaN())
         assertTrue(!s.intakeTemp.isNaN())
         assertTrue(!s.throttlePercent.isNaN())
-        assertTrue(!s.afr.isNaN())
+        assertTrue(!s.lambda.isNaN())
         assertTrue(!s.engineLoad.isNaN())
         assertTrue(!s.gForce.isNaN())
-        assertTrue(!s.maf.isNaN())
+        assertTrue(!s.ignitionTiming.isNaN())
     }
 }

@@ -47,6 +47,25 @@ object ObdDecoder {
         } catch (e: Exception) { -999.0 }
     }
 
+    // PID 0B: presión absoluta del colector (kPa). El boost real es MAP − presión
+    // barométrica (PID 33), que calcula ObdPoller.
+    fun parseMap(response: String): Int {
+        if (!response.startsWith("410B") || response.length < 6) return -1
+        return try {
+            response.substring(4, 6).toInt(16)
+        } catch (e: Exception) { -1 }
+    }
+
+    // PID 44 (lambda pedida) o 34 (lambda medida): A*256+B / 32768. -1 si no es válida.
+    fun parseLambda(response: String, pid: String = "44"): Double {
+        if (!response.startsWith("41$pid") || response.length < 8) return -1.0
+        return try {
+            val a = response.substring(4, 6).toInt(16)
+            val b = response.substring(6, 8).toInt(16)
+            ((a * 256) + b) / 32768.0
+        } catch (e: Exception) { -1.0 }
+    }
+
     fun parseSpeed(response: String): Int {
         if (!response.startsWith("410D") || response.length < 6) return -1
         return try {

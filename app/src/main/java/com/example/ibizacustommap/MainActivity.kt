@@ -109,8 +109,10 @@ fun MainAppScreen(permissionsGranted: Boolean, onRequestPermissions: () -> Unit)
 
             // Estado real del salpicadero de Android Auto (el mismo que se ve en el coche).
             val link by ObdLinkState.link.collectAsState()
+            val rate by ObdLinkState.rateHz.collectAsState()
             Text(
-                text = "SALPICADERO: " + (link?.label ?: "CERRADO"),
+                text = "SALPICADERO: " + (link?.label ?: "CERRADO") +
+                    (rate?.let { " · %.1f Hz".format(it) } ?: ""),
                 color = textColor,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,

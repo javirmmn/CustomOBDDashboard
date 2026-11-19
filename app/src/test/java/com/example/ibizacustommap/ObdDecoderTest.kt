@@ -79,6 +79,18 @@ class ObdDecoderTest {
     }
 
     @Test
+    fun mapYLambdaConDatosDelCocheReal() {
+        // Respuestas del diagnóstico real: ralentí, MAP 0x45 = 69 kPa, lambda pedida 1.0.
+        assertEquals(69, ObdDecoder.parseMap("410B45"))
+        assertEquals(-1, ObdDecoder.parseMap("NODATA"))
+        assertEquals(1.0, ObdDecoder.parseLambda("41448000"), 1e-9)
+        assertEquals(2.0, ObdDecoder.parseLambda("4144FFFF"), 0.001) // corte de inyección
+        assertEquals(-1.0, ObdDecoder.parseLambda(""), 1e-9)
+        assertEquals(101, ObdDecoder.parseBarometricPressure("413365"))
+        assertEquals(-21, ObdDecoder.parseTimingAdvance("410E56"))
+    }
+
+    @Test
     fun parsersSinUsoTodavia() {
         assertEquals(0, ObdDecoder.parseTimingAdvance("410E80"))
         assertEquals(95, ObdDecoder.parseBarometricPressure("41335F"))

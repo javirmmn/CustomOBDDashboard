@@ -157,15 +157,20 @@ class ObdDiagnostics(
             return
         }
         // 2 PIDs caben en una trama CAN; 3 PIDs ya van en varias tramas (formato "0:...1:...").
+        // El sufijo cuenta tramas: se prueba "1" y el nº real de tramas (el que usa ObdPoller).
         val groups = mutableListOf(listOf(0x0C, 0x0D))
         if (0x0B in supported) groups += listOf(0x0C, 0x0D, 0x0B)
+        val medium = listOf(0x49, 0x04, 0x0E, 0x44).filter { it in supported }
+        if (medium.size >= 2) groups += medium
         groups.forEach { pids ->
-            val base = "01" + pids.joinToString("") { "%02X".format(it) }
+            val base = PidSpec.command(pids, counted = false)
             val separate = pids.sumOf { avgMsByPid[it] ?: 0.0 }
-            listOf(base, base + "1").forEach { cmd ->
+            val frames = PidSpec.responseFrames(pids)
+            val variants = listOf(base, base + "1") + if (frames > 1) listOf(base + frames) else emptyList()
+            variants.forEach { cmd ->
                 val results = (1..5).map { exec(cmd) }
                 val complete = results.count { r ->
-                    splitMultiPid(joinFrames(r.response), MULTI_PID_SIZES)?.keys?.containsAll(pids) == true
+                    splitMultiPid(joinFrames(r.response), PidSpec.DATA_BYTES)?.keys?.containsAll(pids) == true
                 }
                 line("  %-10s %s, %d/5 completas, ej: %s".format(cmd, stats(results), complete, results.last().response))
             }
@@ -267,9 +272,6 @@ class ObdDiagnostics(
             0x46 to "Temp. ambiente",
             0x1F to "Tiempo motor en marcha",
         )
-
-        /** Bytes de datos de cada PID que se prueba en multi-PID. */
-        private val MULTI_PID_SIZES = mapOf(0x0C to 2, 0x0D to 1, 0x0B to 1)
 
         private val PROTOCOLS = mapOf(
             '1' to "SAE J1850 PWM",

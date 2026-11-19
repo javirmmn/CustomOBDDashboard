@@ -58,7 +58,11 @@ class ObdDiagnosticsTest {
         "010C0D" to "410C1AF80D32",
         "010C0D1" to "410C1AF80D32",
         "010C0D0B" to "0080:410C1AF80D321:0B65AAAAAAAAAA",
-        "010C0D0B1" to "0080:410C1AF80D321:0B65AAAAAAAAAA",
+        // Como en el coche real: con "1" el ELM327 corta tras la primera trama.
+        "010C0D0B1" to "0080:410C1AF80D32",
+        "010C0D0B2" to "0080:410C1AF80D321:0B650000000000",
+        "01040E" to "4104800E56",
+        "01040E1" to "4104800E56",
         "ATAT1" to "OK",
         "ATAT2" to "OK",
         "ATST19" to "OK",
@@ -75,8 +79,9 @@ class ObdDiagnosticsTest {
         assertTrue(report.contains("ATI  (versión)     : ELM327v1.5"))
         assertTrue(report.contains("TOTAL: 04 05 0B 0C 0D 0E 0F 10 11 20 33"))
         assertTrue(report.contains("automático: ISO 15765-4 CAN (11 bit, 500 kbaud)"))
-        // 010C0D, 010C0D1, 010C0D0B y 010C0D0B1: todas completas.
-        assertEquals(report, 4, Regex("5/5 completas").findAll(report).count())
+        // Completas: 010C0D, 010C0D1, 010C0D0B, 010C0D0B2, 01040E, 01040E1. 010C0D0B1 no.
+        assertEquals(report, 6, Regex("5/5 completas").findAll(report).count())
+        assertTrue(report, report.contains("010C0D0B1") && report.contains("0/5 completas"))
         assertTrue(report.contains("ATAT2 + ATST19"))
         assertTrue(report.contains("==== FIN DIAGNÓSTICO"))
         assertFalse(report.contains("ABORTADO"))

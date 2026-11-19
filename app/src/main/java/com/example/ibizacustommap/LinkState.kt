@@ -41,4 +41,7 @@ object ObdLinkState {
      * conexión Bluetooth a la vez).
      */
     val link = MutableStateFlow<LinkState?>(null)
+
+    /** Lecturas por segundo de RPM/velocidad/MAP en vivo, o null. */
+    val rateHz = MutableStateFlow<Float?>(null)
 }

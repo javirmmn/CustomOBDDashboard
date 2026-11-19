@@ -72,10 +72,12 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             poller?.stop()
             poller = null
             ObdLinkState.link.value = LinkState.SIMULATION
+            ObdLinkState.rateHz.value = null
         } else if (poller == null) {
             poller = ObdPoller(
                 connector = BluetoothElmConnector(carContext),
                 onState = { ObdLinkState.link.value = it },
+                onRate = { ObdLinkState.rateHz.value = it },
             ).also { it.start() }
         }
         scheduleRedraw()
@@ -123,6 +125,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
                     renderHandler.removeCallbacksAndMessages(null)
                     renderThread.quitSafely()
                     ObdLinkState.link.value = null
+                    ObdLinkState.rateHz.value = null
                 }
             },
         )
