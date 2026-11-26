@@ -18,11 +18,11 @@ Resumen de la conversación con Claude para retomar el trabajo en otra sesión.
 - **Solo release.** El usuario solo instala builds release desde Google Play (prueba interna, él como tester); Android Auto no permite sideload en su coche. Nada puede depender de `BuildConfig.DEBUG` (el overlay de debug con `R:` y `SIM_OK` no lo ve nunca).
 - **Subir `versionCode`** en cada build que vaya a Play.
 - **Claude no puede probar en el coche.** Cambios en la conexión: mínimos, con tests en PC, y avisando de que solo se validan en el coche. La secuencia de inicialización AT (ATZ, ATE0, ATH0, ATS0, ATSP0, ATDPN con sus esperas) no se ha tocado.
-- Commits solo cuando el usuario lo pide. Rama de trabajo: **`reencaminar`** (sale de `main`).
+- Commits solo cuando el usuario lo pide. Todo se trabaja directamente en **`main`** (no hay más ramas).
 - Todo diagnóstico es **solo lectura** (lista blanca en `ObdDiagnostics.isReadOnly`).
 - Las celdas actuales son las elegidas "por ahora"; el usuario puede cambiarlas en el futuro, pero la app no debe decir que son temporales.
 
-## 3. Commits en la rama `reencaminar`
+## 3. Commits en `main`
 
 | Commit | Contenido | Versión |
 |---|---|---|
@@ -84,7 +84,7 @@ Tests unitarios: 56, todos pasan (`testDebugUnitTest`; con AGP 9 no existe `test
 
 ## 7. Pendiente inmediato
 
-1. Generar AAB firmado (rama `reencaminar`) y subir **13 (1.5.0)** a prueba interna. Notas de versión:
+1. Generar AAB firmado (rama `main`) y subir **13 (1.5.0)** a prueba interna. Notas de versión:
    ```
    <es-ES>
    1.5.0 (13)
@@ -153,6 +153,6 @@ export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
 
 ## 12. Cómo subir a Play (resumen)
 
-1. Android Studio en rama `reencaminar` → Build → Generate Signed App Bundle → keystore de siempre → release.
+1. Android Studio en rama `main` → Build → Generate Signed App Bundle → keystore de siempre → release.
 2. Play Console → Prueba interna → Crear nueva versión → subir `app/release/app-release.aab` → notas dentro de `<es-ES>…</es-ES>` → no "Incluir" la versión anterior → Siguiente → Guardar y publicar.
 3. Actualizar desde Play Store en el móvil (sin desinstalar, salvo que cambie el `CarAppService`).
