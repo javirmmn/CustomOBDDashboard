@@ -31,3 +31,6 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Capturas de trabajo del diseño (se regeneran con DebugFrameExporter)
+docs/design/capturas/
