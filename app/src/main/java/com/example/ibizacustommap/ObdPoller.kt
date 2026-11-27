@@ -356,7 +356,7 @@ class ObdPoller(
 
     private inner class Readings(private val oilSupported: Boolean, private val pedal: Boolean) {
         var speed = Float.NaN
-        var leds = 0
+        var rpm = Float.NaN
         var mapKpa = Float.NaN
         var baroKpa = DEFAULT_BARO_KPA
         var temp = Float.NaN
@@ -371,7 +371,7 @@ class ObdPoller(
                 val raw = raw(pid, data)
                 when (pid) {
                     PidSpec.RPM -> ObdDecoder.parseRPM(raw).takeIf { it >= 0 }?.let {
-                        leds = (it / DashboardRenderer.RPM_PER_LED).coerceIn(0, 24)
+                        rpm = it.toFloat()
                     }
                     PidSpec.SPEED -> ObdDecoder.parseSpeed(raw).takeIf { it >= 0 }?.let { speed = it.toFloat() }
                     PidSpec.MAP -> ObdDecoder.parseMap(raw).takeIf { it >= 0 }?.let { mapKpa = it.toFloat() }
@@ -393,14 +393,14 @@ class ObdPoller(
 
         /** Sin datos de la ECU: todo a NaN (la presión barométrica se conserva). */
         fun clear() {
-            speed = Float.NaN; leds = 0; mapKpa = Float.NaN; temp = Float.NaN; intake = Float.NaN
+            speed = Float.NaN; rpm = Float.NaN; mapKpa = Float.NaN; temp = Float.NaN; intake = Float.NaN
             throttle = Float.NaN; load = Float.NaN; timing = Float.NaN; lambda = Float.NaN
         }
 
         fun toSnapshot(gear: String, debugRaw: String, gearRatio: Float, link: LinkState) = TelemetrySnapshot(
             speedKmh = speed,
             gearDisplay = gear,
-            activeLeds = leds,
+            rpm = rpm,
             oilTemp = temp,
             oilTempFromCoolant = !oilSupported,
             turboPressure = if (mapKpa.isNaN()) Float.NaN else (mapKpa - baroKpa) / 100f,

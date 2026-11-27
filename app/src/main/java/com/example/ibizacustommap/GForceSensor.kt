@@ -30,6 +30,11 @@ class GForceSensor(context: Context) : SensorEventListener {
     var currentG: Float = Float.NaN
         private set
 
+    /** Máximo de [currentG] desde que se creó el sensor (la sesión de Android Auto). */
+    @Volatile
+    var peakG: Float = Float.NaN
+        private set
+
     fun start() {
         if (sensorManager == null || linearSensor == null || gravitySensor == null) return
         sensorManager.registerListener(this, gravitySensor, SensorManager.SENSOR_DELAY_GAME)
@@ -49,7 +54,9 @@ class GForceSensor(context: Context) : SensorEventListener {
             Sensor.TYPE_LINEAR_ACCELERATION -> if (hasGravity) {
                 val g = horizontalG(event.values, gravity)
                 val previous = currentG
-                currentG = if (previous.isNaN()) g else previous + SMOOTHING * (g - previous)
+                val smoothed = if (previous.isNaN()) g else previous + SMOOTHING * (g - previous)
+                currentG = smoothed
+                if (peakG.isNaN() || smoothed > peakG) peakG = smoothed
             }
         }
     }

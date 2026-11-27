@@ -181,7 +181,7 @@ class ObdPollerTest {
         assertEquals(listOf(LinkState.SEARCHING, LinkState.CONNECTING, LinkState.LIVE), states)
         val s = p.snapshot
         assertEquals(50f, s.speedKmh, 0.01f)
-        assertEquals(8, s.activeLeds)
+        assertEquals(2055f, s.rpm, 1f)
         assertEquals(0.49f, s.turboPressure, 0.001f) // (150 − 101) / 100, no − 100 fijos
         assertTrue(s.throttleIsPedal)
         assertEquals(0f, s.throttlePercent, 0.01f) // pedal en reposo
@@ -326,7 +326,7 @@ class ObdPollerTest {
         assertTrue(p.snapshot.oilTemp.isNaN())
         assertTrue(p.snapshot.turboPressure.isNaN())
         assertEquals("--", p.snapshot.gearDisplay)
-        assertEquals(0, p.snapshot.activeLeds)
+        assertTrue(p.snapshot.rpm.isNaN())
         assertEquals(null, rates.last())
     }
 
@@ -343,7 +343,7 @@ class ObdPollerTest {
         assertEquals(listOf(2000L, 4000L, 8000L, 16000L, 30000L, 30000L), sleeper.sleeps)
         assertEquals("--", p.snapshot.gearDisplay)
         assertTrue(p.snapshot.speedKmh.isNaN())
-        assertEquals(0, p.snapshot.activeLeds)
+        assertTrue(p.snapshot.rpm.isNaN())
     }
 
     @Test

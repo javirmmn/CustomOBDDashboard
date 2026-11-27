@@ -184,6 +184,26 @@ fun MainAppScreen(permissionsGranted: Boolean, onRequestPermissions: () -> Unit)
                     letterSpacing = 1.sp,
                 )
             }
+
+            // Solo en debug: pantalla de ajuste del diseño en vivo (vive en el
+            // source set debug, así que se abre por nombre; en release no existe).
+            if (BuildConfig.DEBUG) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent().setClassName(context, "com.example.ibizacustommap.tuning.ThemeTunerActivity"),
+                        )
+                    },
+                ) {
+                    Text(
+                        text = "AJUSTE DEL DISEÑO (DEBUG)",
+                        color = mutedText,
+                        fontSize = 12.sp,
+                        letterSpacing = 1.sp,
+                    )
+                }
+            }
         } else {
             Text(
                 text = "ACCESO REQUERIDO",

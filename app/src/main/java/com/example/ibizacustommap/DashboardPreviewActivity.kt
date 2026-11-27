@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.platform.LocalDensity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -53,6 +52,17 @@ class DashboardPreviewActivity : ComponentActivity() {
         } catch (_: Exception) {
         }
 
+        // Solo en debug: guarda un frame 2400×1080 en PNG para compararlo con la referencia.
+        if (BuildConfig.DEBUG) {
+            Thread({
+                try {
+                    DebugFrameExporter.export(applicationContext)
+                } catch (e: Exception) {
+                    android.util.Log.e("DebugFrame", "No se pudo exportar el frame", e)
+                }
+            }, "DebugFrameExport").start()
+        }
+
         setContent {
             var tick by remember { mutableFloatStateOf(0f) }
 
@@ -64,7 +74,7 @@ class DashboardPreviewActivity : ComponentActivity() {
             }
 
             val snapshot = remember(tick) { DashboardSimulator.at(tick) }
-            val density = LocalDensity.current.density
+            val renderer = remember { DashboardRenderer(DashboardRenderer.loadLogo(resources)) }
 
             Canvas(
                 modifier = Modifier
@@ -72,11 +82,10 @@ class DashboardPreviewActivity : ComponentActivity() {
                     .background(Color.Black),
             ) {
                 drawIntoCanvas { canvas ->
-                    DashboardRenderer.draw(
+                    renderer.draw(
                         canvas = canvas.nativeCanvas,
                         width = size.width.toInt(),
                         height = size.height.toInt(),
-                        density = density,
                         s = snapshot,
                     )
                 }

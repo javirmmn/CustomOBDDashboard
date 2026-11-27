@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Solo en el build type debug: pantalla de ajuste del diseño del salpicadero. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name=".tuning.ThemeTunerActivity"
+            android:exported="false"
+            android:label="Ajuste del diseño"
+            android:theme="@style/Theme.IbizaCustomMap" />
+    </application>
+
+</manifest>

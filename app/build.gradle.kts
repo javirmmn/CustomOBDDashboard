@@ -56,5 +56,7 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // Pantalla de ajuste del diseño (solo debug): presets guardados.
+    debugImplementation(libs.androidx.datastore.preferences)
     implementation("androidx.car.app:app:1.4.0")
 }

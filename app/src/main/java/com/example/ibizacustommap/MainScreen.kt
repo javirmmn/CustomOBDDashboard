@@ -34,6 +34,12 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
 
     private val gForceSensor = GForceSensor(carContext)
 
+    // Solo se usa desde el hilo de render (guarda cachés de dibujo).
+    private val renderer = DashboardRenderer(
+        DashboardRenderer.loadLogo(carContext.resources),
+        metricsSink = DashDebug.carMetrics,
+    )
+
     // Fuente de datos. Se cambian solo desde el hilo principal; el hilo de
     // render solo las lee (de ahí @Volatile).
     @Volatile
@@ -87,6 +93,10 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
     private var redrawQueued = false
 
     private var lastVisible: Rect? = null
+
+    // Zona que Android Auto garantiza libre (sin la barra de acciones). Se
+    // escribe en el hilo principal y se lee en el de render.
+    @Volatile
     private var lastStable: Rect? = null
 
     private val navigationManagerCallback =
@@ -197,7 +207,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
             DashboardSimulator.at(simulationTick)
         } else {
             (poller?.snapshot ?: TelemetrySnapshot.empty(LinkState.SEARCHING))
-                .copy(gForce = gForceSensor.currentG)
+                .copy(gForce = gForceSensor.currentG, gForcePeak = gForceSensor.peakG)
         }
 
     private fun performRedrawSurface() {
@@ -244,7 +254,7 @@ class MainScreen(carContext: CarContext) : Screen(carContext), SurfaceCallback {
         }
 
         try {
-            DashboardRenderer.draw(canvas, w, h, getCarContext().resources.displayMetrics.density, snapshot)
+            renderer.draw(canvas, w, h, snapshot, area = lastStable)
         } catch (e: Exception) {
             Log.e(TAG, "Draw error", e)
         } finally {

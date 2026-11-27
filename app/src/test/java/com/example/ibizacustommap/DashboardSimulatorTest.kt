@@ -20,7 +20,7 @@ class DashboardSimulatorTest {
             assertTrue("oilTemp=${s.oilTemp}", s.oilTemp in 0f..150f)
             assertTrue("throttlePercent=${s.throttlePercent}", s.throttlePercent in 0f..100f)
             assertTrue("engineLoad=${s.engineLoad}", s.engineLoad in 0f..100f)
-            assertTrue("activeLeds=${s.activeLeds}", s.activeLeds in 0..24)
+            assertTrue("rpm=${s.rpm}", s.rpm in 0f..RpmScale.MAX_RPM)
             assertTrue("lambda=${s.lambda}", s.lambda in 0.7f..1.2f)
             assertTrue("ignitionTiming=${s.ignitionTiming}", s.ignitionTiming in -10f..45f)
             assertTrue(listOf("N", "1", "2", "3", "4", "5").contains(s.gearDisplay))
